@@ -1,0 +1,56 @@
+# Ambiente Laravel Sail para desenvolvimento do pacote (PHP 8.3 + Redis).
+#
+# Observações:
+#   - Este repositório é um PACOTE (não há `artisan`), por isso o serviço
+#     `laravel.test` é mantido ocioso via `command` em vez de subir o
+#     supervisord/`artisan serve` padrão do Sail. Os comandos são executados
+#     com `docker compose exec` (ex.: `./vendor/bin/sail pest`).
+#   - O build depende de `vendor/laravel/sail`; no primeiro uso, instale as
+#     dependências conforme descrito em CONTRIBUTING.md.
+services:
+  laravel.test:
+    build:
+      context: './vendor/laravel/sail/runtimes/8.3'
+      dockerfile: Dockerfile
+      args:
+        WWWGROUP: '${WWWGROUP:-1000}'
+    image: 'sail-8.3/app'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    command: ['tail', '-f', '/dev/null']
+    environment:
+      WWWUSER: '${WWWUSER:-1000}'
+      LARAVEL_SAIL: 1
+      XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
+      XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - '.:/var/www/html'
+    networks:
+      - sail
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: 'redis:alpine'
+    ports:
+      - '${FORWARD_REDIS_PORT:-6379}:6379'
+    volumes:
+      - 'sail-redis:/data'
+    networks:
+      - sail
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      retries: 3
+      timeout: 5s
+
+networks:
+  sail:
+    driver: bridge
+
+volumes:
+  sail-redis:
+    driver: local

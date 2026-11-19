@@ -1,0 +1,167 @@
+# .cursorrules — Arquitetura do Projeto & Diretrizes para Cursor IA
+
+Este arquivo define as regras de arquitetura, padrões de código e instruções de execução para o **Cursor IA** no projeto **Laravel Resilience Kit**.
+
+---
+
+## 🎯 1. Princípios Arquiteturais e Diretrizes de Código
+
+O **Laravel Resilience Kit** é um pacote Laravel moderno (compatível com Laravel 11.x / 12.x e PHP 8.3+) estruturado sob princípios de arquitetura limpa, alta coesão e baixo acoplamento.
+
+### Diretrizes Obrigatórias para Geração de Código:
+1. **Strict Safety & Typing:** Todo arquivo PHP DEVE iniciar com `declare(strict_types=1);`. Todos os métodos e funções DEVEM possuir tipos de parâmetros e retornos declarados explicitamente.
+2. **PHP Moderno (PHP 8.3/8.4):** Utilize Enums com tipo (`CircuitState`), readonly properties, atributos PHP (`#[WithCircuitBreaker]`), match expressions e First-class callable syntax.
+3. **Padrão de Execução via Laravel Sail:** Toda recomendação de comando no terminal ou script de teste executado pelo Agent/Composer no Cursor DEVE utilizar o **Laravel Sail** (`./vendor/bin/sail ...`).
+4. **Zero Race Conditions:** Operações de contagem e verificação de estado no Redis/Cache devem ser estritamente atômicas.
+5. **Axioma de Extensibilidade (SOLID):** O Core do pacote deve ser extensível sem breaking changes. Novos recursos de resiliência (Bulkheads, Rate Limiters, Timeouts) serão adicionados como módulos independentes implementando contratos comuns.
+
+---
+
+## 🐳 2. Ambiente Laravel Sail (Docker Execution)
+
+O Cursor IA deve assumir que o ambiente de execução local é conteinerizado via **Laravel Sail** com a seguinte pilha:
+- **Container PHP:** `laravelsail/php83-composer` / PHP 8.3 ou 8.4
+- **Container Redis:** `redis:alpine`
+- **Ferramenta de Teste:** Pest PHP (`./vendor/bin/sail pest`)
+- **Análise Estática:** Larastan / PHPStan (`./vendor/bin/sail phpstan`)
+- **Linter / Formatter:** Laravel Pint (`./vendor/bin/sail pint`)
+
+---
+
+## 📁 3. Estrutura de Diretórios do Pacote
+
+```
+laravel-resilience-kit/
+├── .cursorrules                         <- Copiar este conteúdo para a raiz do projeto
+├── docker-compose.yml                   <- Configuração do Laravel Sail (PHP 8.3 + Redis)
+├── composer.json                        <- Dependências do pacote (Orchestra Testbench, Pest, etc.)
+├── config/
+│   └── resilience-kit.php
+├── resources/
+│   └── views/
+│       └── dashboard/
+│           └── index.blade.php
+├── routes/
+│   └── web.php
+├── src/
+│   ├── CircuitBreaker/
+│   │   ├── Attributes/
+│   │   │   └── WithCircuitBreaker.php
+│   │   ├── Contracts/
+│   │   │   ├── CircuitBreakerInterface.php
+│   │   │   └── CircuitStoreInterface.php
+│   │   ├── Drivers/
+│   │   │   ├── CacheCircuitStore.php
+│   │   │   ├── RedisCircuitStore.php
+│   │   │   └── ArrayCircuitStore.php  <- Para testes isolados
+│   │   ├── Enums/
+│   │   │   └── CircuitState.php
+│   │   ├── Events/
+│   │   │   ├── CircuitOpened.php
+│   │   │   ├── CircuitClosed.php
+│   │   │   └── CircuitHalfOpened.php
+│   │   ├── Exceptions/
+│   │   │   └── CircuitBreakerOpenException.php
+│   │   ├── Services/
+│   │   │   └── CircuitBreakerService.php
+│   │   └── CircuitBreakerManager.php
+│   ├── Contracts/
+│   │   ├── ResilienceFeatureInterface.php
+│   │   └── FallbackHandlerInterface.php
+│   ├── Facades/
+│   │   └── Resilience.php
+│   ├── Http/
+│   │   ├── Controllers/
+│   │   │   ├── DashboardController.php
+│   │   │   └── CircuitApiController.php
+│   │   └── Middleware/
+│   │       └── AuthorizeDashboard.php
+│   └── ResilienceServiceProvider.php
+└── tests/
+    ├── TestCase.php                     <- Base test case estendendo Orchestra\Testbench\TestCase
+    ├── Unit/
+    │   ├── CircuitBreakerStateTest.php
+    │   ├── CircuitBreakerFallbackTest.php
+    │   ├── RedisCircuitStoreTest.php
+    │   └── CircuitBreakerAttributeTest.php
+    └── Feature/
+        └── DashboardApiTest.php
+```
+
+---
+
+## 🧪 4. Padrões de Testes Unitários e de Integração com Pest
+
+Todo código gerado pelo Cursor IA DEVE acompanhar seus respectivos testes usando **Pest PHP**.
+
+### Exemplo de Teste Unitário da Máquina de Estados (`tests/Unit/CircuitBreakerStateTest.php`):
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+
+beforeEach(function () {
+    $this->circuit = Resilience::circuitBreaker('test-service')
+        ->failureThreshold(2)
+        ->recoveryTimeout(10)
+        ->halfOpenTrials(2);
+});
+
+it('starts in CLOSED state and executes action successfully', function () {
+    $result = $this->circuit->run(fn () => 'success');
+
+    expect($result)->toBe('success')
+        ->and($this->circuit->getState())->toBe(CircuitState::CLOSED);
+});
+
+it('trips to OPEN when failure threshold is reached', function () {
+    // Primeira falha
+    try {
+        $this->circuit->run(fn () => throw new Exception('Service error'));
+    } catch (Throwable $e) {}
+
+    expect($this->circuit->getState())->toBe(CircuitState::CLOSED);
+
+    // Segunda falha (atinge threshold = 2)
+    try {
+        $this->circuit->run(fn () => throw new Exception('Service error'));
+    } catch (Throwable $e) {}
+
+    expect($this->circuit->getState())->toBe(CircuitState::OPEN);
+});
+
+it('executes fallback when circuit is OPEN', function () {
+    // Forçar circuito para OPEN
+    $this->circuit->trip();
+
+    $result = $this->circuit
+        ->fallback(fn (\Throwable $e) => 'fallback-response')
+        ->run(fn () => 'normal-response');
+
+    expect($result)->toBe('fallback-response');
+});
+```
+
+---
+
+## 🤖 5. Roteiro de Prompts para Iniciar o Scaffolding no Cursor IA
+
+Copie e envie estes prompts sequencialmente no **Composer / Agent Mode** do Cursor (selecionando o modelo **Claude 3.5 Sonnet** ou **Claude 3.7 Sonnet**):
+
+### Prompt 1 — Scaffolding Inicial
+> *"Por favor, crie o arquivo `composer.json` configurado para um pacote Laravel moderno com PHP >= 8.3, Orchestra Testbench ^9.0, Pest PHP ^3.0, Laravel Pint e Larastan. Crie também o arquivo `docker-compose.yml` para suporte ao Laravel Sail com PHP 8.3 e Redis, o arquivo de configuração `config/resilience-kit.php` e a estrutura de pastas do projeto em `src/` e `tests/`."*
+
+### Prompt 2 — Enum, Driver e Interface
+> *"Implemente o Enum `CircuitState`, a interface `CircuitStoreInterface`, o driver `ArrayCircuitStore` e o driver `RedisCircuitStore` atômico em `src/CircuitBreaker/` seguindo a especificação em `docs/circuit-breaker-spec.md`."*
+
+### Prompt 3 — Core do Circuit Breaker Service e Facade
+> *"Implemente a classe `CircuitBreakerService`, a exceção `CircuitBreakerOpenException`, os eventos `CircuitOpened`, `CircuitClosed` e `CircuitHalfOpened`, a Facade `Resilience` e registre tudo no `ResilienceServiceProvider`."*
+
+### Prompt 4 — Testes Unitários
+> *"Crie os testes unitários da máquina de estados e dos drivers em `tests/Unit/CircuitBreakerStateTest.php` e `tests/Unit/RedisCircuitStoreTest.php` usando Pest PHP e Orchestra Testbench. Garanta que o comando `./vendor/bin/sail pest` passe com sucesso."*
+
+### Prompt 5 — Atributos e Dashboard
+> *"Implemente o atributo PHP `#[WithCircuitBreaker]`, o controller `DashboardController` e `CircuitApiController`, a rota de reset manual em `routes/web.php` e a view Blade do painel. Adicione os testes de feature correspondentes em `tests/Feature/DashboardApiTest.php`."*

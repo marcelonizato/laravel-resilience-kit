@@ -1,0 +1,23 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+        - config
+    tmpDir: .phpstan.cache
+    ignoreErrors:
+        # Em um pacote, `config/` não é o config_path() da aplicação analisada;
+        # o uso de env() no arquivo de configuração do pacote é o esperado.
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/*
+        # O Larastan só reconhece views dos diretórios da aplicação analisada, não
+        # views com namespace de pacote (`resilience-kit::...`, registradas via
+        # loadViewsFrom). A existência da view é coberta por DashboardApiTest.
+        -
+            message: '#expects view-string, string given#'
+            identifier: argument.type
+            path: src/Http/Controllers/DashboardController.php
+            count: 1
