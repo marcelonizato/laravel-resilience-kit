@@ -52,11 +52,15 @@ class CircuitApiController extends Controller
     /**
      * Serializa um circuito para o formato da API.
      *
+     * Usa {@see CircuitBreakerInterface::resolveState()} para que, após o
+     * `recovery_timeout`, o dashboard reflita `HALF-OPEN` (e dispare o evento)
+     * sem depender de uma nova requisição de negócio.
+     *
      * @return array<string, mixed>
      */
     private function present(CircuitBreakerInterface $circuit): array
     {
-        $state = $circuit->getState();
+        $state = $circuit->resolveState();
         $trippedAt = $circuit->getLastTrippedAt();
 
         $retryAfter = $state === CircuitState::OPEN && $trippedAt !== null

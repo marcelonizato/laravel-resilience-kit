@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
 use LaravelResilienceKit\CircuitBreaker\Events\CircuitClosed;
+use LaravelResilienceKit\CircuitBreaker\Events\CircuitHalfOpened;
 use LaravelResilienceKit\Facades\Resilience;
 
 beforeEach(function (): void {
@@ -71,6 +72,33 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
 
     expect($trippedAt)->toBeString()
         ->and(Carbon\Carbon::parse($trippedAt)->getTimestamp())->toBe($broken->getLastTrippedAt());
+});
+
+it('shows HALF-OPEN on the dashboard after the recovery timeout elapses', function (): void {
+    Event::fake([CircuitHalfOpened::class]);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 10);
+
+    $circuit = Resilience::circuitBreaker('payment-service');
+    $circuit->trip();
+
+    expect($circuit->getState())->toBe(CircuitState::OPEN);
+
+    $this->travel(10)->seconds();
+
+    $this->getJson('/resilience/api/circuits')
+        ->assertOk()
+        ->assertJsonPath('circuits.0.name', 'payment-service')
+        ->assertJsonPath('circuits.0.state', 'half_open')
+        ->assertJsonPath('circuits.0.state_label', 'HALF-OPEN')
+        ->assertJsonPath('circuits.0.retry_after', null);
+
+    expect($circuit->getState())->toBe(CircuitState::HALF_OPEN);
+
+    Event::assertDispatchedTimes(CircuitHalfOpened::class, 1);
+    Event::assertDispatched(
+        CircuitHalfOpened::class,
+        fn (CircuitHalfOpened $event): bool => $event->circuit === 'payment-service',
+    );
 });
 
 /*

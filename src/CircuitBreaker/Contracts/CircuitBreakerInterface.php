@@ -40,8 +40,19 @@ interface CircuitBreakerInterface extends ResilienceFeatureInterface
 
     /**
      * Estado atual do circuito (leitura pura, sem efeitos colaterais).
+     *
+     * Não aplica a transição `OPEN -> HALF-OPEN` quando o `recovery_timeout`
+     * já expirou; use {@see self::resolveState()} para isso.
      */
     public function getState(): CircuitState;
+
+    /**
+     * Lê o estado e, se o `recovery_timeout` expirou, move `OPEN -> HALF-OPEN`.
+     *
+     * A transição é atômica: apenas um chamador concorrente efetiva a mudança
+     * e dispara `CircuitHalfOpened`. Usado por `run()` e pelo dashboard.
+     */
+    public function resolveState(): CircuitState;
 
     /**
      * Número de falhas acumuladas desde o último fechamento/reset.

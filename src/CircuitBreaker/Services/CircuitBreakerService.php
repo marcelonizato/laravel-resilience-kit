@@ -263,13 +263,13 @@ class CircuitBreakerService implements CircuitBreakerInterface
     }
 
     /**
-     * Lê o estado e, se o `recovery_timeout` expirou, tenta mover OPEN -> HALF-OPEN.
+     * {@inheritDoc}
      *
      * O compare-and-set garante que apenas um chamador concorrente efetue a
      * transição e dispare {@see CircuitHalfOpened}; os demais apenas releem o
      * estado resultante.
      */
-    private function resolveState(): CircuitState
+    public function resolveState(): CircuitState
     {
         $state = $this->store->getState($this->name);
 

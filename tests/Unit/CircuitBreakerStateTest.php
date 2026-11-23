@@ -146,6 +146,17 @@ it('moves from OPEN to HALF-OPEN on the first request after the recovery timeout
     Event::assertDispatched(CircuitHalfOpened::class, fn (CircuitHalfOpened $event): bool => $event->circuit === 'test-service');
 });
 
+it('resolves OPEN to HALF-OPEN without executing a business request', function (): void {
+    $this->circuit->trip();
+    $this->travel(10)->seconds();
+
+    expect($this->circuit->getState())->toBe(CircuitState::OPEN)
+        ->and($this->circuit->resolveState())->toBe(CircuitState::HALF_OPEN)
+        ->and($this->circuit->getState())->toBe(CircuitState::HALF_OPEN);
+
+    Event::assertDispatchedTimes(CircuitHalfOpened::class, 1);
+});
+
 it('closes the circuit and zeroes failures after the configured number of successful trials', function (): void {
     attempt($this->circuit, failingAction());
     attempt($this->circuit, failingAction());
