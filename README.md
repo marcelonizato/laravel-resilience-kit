@@ -44,7 +44,7 @@ Se você estiver desenvolvendo ou contribuindo diretamente no pacote, o **Larave
 ./vendor/bin/sail pest
 
 # Executar análise estática de código (Larastan/PHPStan)
-./vendor/bin/sail phpstan
+./vendor/bin/sail exec laravel.test ./vendor/bin/phpstan analyse app
 
 # Corrigir formatação de código (Laravel Pint)
 ./vendor/bin/sail pint
