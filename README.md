@@ -1,6 +1,6 @@
 # Laravel Resilience Kit
 
-O **Laravel Resilience Kit** é um pacote moderno, modular e altamente extensível para o ecossistema Laravel (compátivel com Laravel 11.x / 12.x e PHP 8.3+), projetado para prover mecanismos avançados de tolerância a falhas e resiliência em arquiteturas distribuídas e microsserviços.
+O **Laravel Resilience Kit** é um pacote moderno, modular e altamente extensível para o ecossistema Laravel (compátivel com Laravel 11.x / 12.x e PHP 8.3+), projetado para prover mecanismos avançados de tolerância a falhas e resiliência em arquiteturas distribuídas.
 
 Nesta primeira versão, o pacote entrega uma implementação robusta do padrão **Circuit Breaker** integrando armazenamento atômico distribuído (Redis/Cache), suporte nativo ao **Laravel Sail** para ambiente Docker local e um **Painel de Monitoramento (Dashboard)** embutido com suporte a reset manual de circuitos.
 
@@ -13,8 +13,6 @@ Nesta primeira versão, o pacote entrega uma implementação robusta do padrão 
 - 🎛️ **Dashboard Integrado:** Painel administrativo leve para visualizar o status dos circuitos, estatísticas de execução e realizar resets manuais.
 - 🔀 **Fallback Handler Flexível:** Suporte a callbacks de fallback, classes dedicadas ou retorno de valores padrão configuráveis.
 - 🧪 **Suíte Completa de Testes com Pest:** Testes unitários e de integração cobrindo 100% da máquina de estados do Circuit Breaker.
-- 🤖 **Totalmente Pronto para Cursor IA:** Inclui arquivo `.cursorrules` otimizado para geração e refatoração de código via IA.
-
 ---
 
 ## 📦 Instalação
