@@ -210,6 +210,63 @@ LUA;
     }
 
     /**
+     * {@inheritDoc}
+     */
+    public function setFailureThreshold(string $circuit, int $threshold): void
+    {
+        $this->writeConfig($circuit, $this->keys->failureThreshold($circuit), $threshold);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getFailureThreshold(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->failureThreshold($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setRecoveryTimeout(string $circuit, int $seconds): void
+    {
+        $this->writeConfig($circuit, $this->keys->recoveryTimeout($circuit), $seconds);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getRecoveryTimeout(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->recoveryTimeout($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setHalfOpenTrials(string $circuit, int $trials): void
+    {
+        $this->writeConfig($circuit, $this->keys->halfOpenTrials($circuit), $trials);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getHalfOpenTrials(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->halfOpenTrials($circuit));
+    }
+
+    /**
+     * Grava um limite do circuito. `SET` é atômico; o valor não entra no reset.
+     */
+    private function writeConfig(string $circuit, string $key, int $value): void
+    {
+        $this->register($circuit);
+        $this->connection->command('set', [$key, (string) $value]);
+    }
+
+    /**
      * Executa o script Lua de transição de estado.
      */
     private function runTransition(string $circuit, CircuitState $from, CircuitState $to, bool $force): bool
@@ -268,8 +325,16 @@ LUA;
 
     private function readInt(string $key): int
     {
+        return $this->readOptionalInt($key) ?? 0;
+    }
+
+    /**
+     * Lê um inteiro opcional. Ausência ou valor não numérico viram `null`.
+     */
+    private function readOptionalInt(string $key): ?int
+    {
         $value = $this->read($key);
 
-        return is_numeric($value) ? (int) $value : 0;
+        return is_numeric($value) ? (int) $value : null;
     }
 }

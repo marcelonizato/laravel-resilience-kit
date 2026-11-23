@@ -15,8 +15,8 @@ use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
  * API JSON do dashboard: listagem dos circuitos e reset manual.
  *
  * Os limites exibidos (`failure_threshold`, `recovery_timeout`,
- * `half_open_trials`) são os padrões de `config/resilience-kit.php`: ajustes
- * feitos por circuito via API fluente ou atributo não são persistidos no store.
+ * `half_open_trials`) seguem a precedência: store (API fluente/atributo),
+ * depois `circuits.{name}` e, por fim, os defaults de `circuit_breaker`.
  */
 class CircuitApiController extends Controller
 {

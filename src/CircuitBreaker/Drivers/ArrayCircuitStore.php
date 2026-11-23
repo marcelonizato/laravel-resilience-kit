@@ -32,6 +32,15 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /** @var array<string, string> */
     private array $lastFailureReason = [];
 
+    /** @var array<string, int> */
+    private array $failureThresholds = [];
+
+    /** @var array<string, int> */
+    private array $recoveryTimeouts = [];
+
+    /** @var array<string, int> */
+    private array $halfOpenTrials = [];
+
     /** @var array<string, true> */
     private array $registered = [];
 
@@ -159,6 +168,57 @@ final class ArrayCircuitStore implements CircuitStoreInterface
             $this->lastTrippedAt[$circuit],
             $this->lastFailureReason[$circuit],
         );
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setFailureThreshold(string $circuit, int $threshold): void
+    {
+        $this->register($circuit);
+        $this->failureThresholds[$circuit] = $threshold;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getFailureThreshold(string $circuit): ?int
+    {
+        return $this->failureThresholds[$circuit] ?? null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setRecoveryTimeout(string $circuit, int $seconds): void
+    {
+        $this->register($circuit);
+        $this->recoveryTimeouts[$circuit] = $seconds;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getRecoveryTimeout(string $circuit): ?int
+    {
+        return $this->recoveryTimeouts[$circuit] ?? null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setHalfOpenTrials(string $circuit, int $trials): void
+    {
+        $this->register($circuit);
+        $this->halfOpenTrials[$circuit] = $trials;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getHalfOpenTrials(string $circuit): ?int
+    {
+        return $this->halfOpenTrials[$circuit] ?? null;
     }
 
     /**

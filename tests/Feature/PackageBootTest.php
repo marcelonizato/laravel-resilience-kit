@@ -13,6 +13,7 @@ it('merges the default package configuration', function (): void {
         ->and(config('resilience-kit.circuit_breaker.recovery_timeout'))->toBe(30)
         ->and(config('resilience-kit.circuit_breaker.half_open_trials'))->toBe(3)
         ->and(config('resilience-kit.circuit_breaker.prefix'))->toBe('resilience:cb:')
+        ->and(config('resilience-kit.circuits'))->toBe([])
         ->and(config('resilience-kit.dashboard.middleware'))->toBe(['web', 'auth']);
 });
 

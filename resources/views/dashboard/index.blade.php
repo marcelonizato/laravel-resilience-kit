@@ -95,7 +95,7 @@
     </div>
 
     <footer class="muted">
-        Thresholds and timeouts shown are the defaults from <code>config/resilience-kit.php</code>.
+        Thresholds and timeouts follow store overrides, then <code>circuits.{name}</code>, then the global defaults in <code>config/resilience-kit.php</code>.
     </footer>
 </div>
 

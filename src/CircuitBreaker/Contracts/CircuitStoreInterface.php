@@ -102,7 +102,47 @@ interface CircuitStoreInterface
 
     /**
      * Reset completo: remove estado e contadores (o circuito volta a CLOSED).
-     * O circuito permanece registrado no índice.
+     *
+     * O circuito permanece registrado no índice e os limites configurados
+     * ({@see self::setFailureThreshold()}, {@see self::setRecoveryTimeout()},
+     * {@see self::setHalfOpenTrials()}) são preservados.
      */
     public function reset(string $circuit): void;
+
+    /**
+     * Persiste o limite de falhas do circuito.
+     *
+     * Sobrevive a {@see self::reset()}. `null` em {@see self::getFailureThreshold()}
+     * significa que o circuito ainda usa o padrão da configuração.
+     */
+    public function setFailureThreshold(string $circuit, int $threshold): void;
+
+    /**
+     * Limite de falhas persistido, ou `null` se o circuito nunca o definiu.
+     */
+    public function getFailureThreshold(string $circuit): ?int;
+
+    /**
+     * Persiste o timeout de recuperação, em segundos.
+     *
+     * Sobrevive a {@see self::reset()}.
+     */
+    public function setRecoveryTimeout(string $circuit, int $seconds): void;
+
+    /**
+     * Timeout de recuperação persistido, em segundos, ou `null` se indefinido.
+     */
+    public function getRecoveryTimeout(string $circuit): ?int;
+
+    /**
+     * Persiste a quantidade de sucessos em HALF-OPEN necessária para fechar.
+     *
+     * Sobrevive a {@see self::reset()}.
+     */
+    public function setHalfOpenTrials(string $circuit, int $trials): void;
+
+    /**
+     * Quantidade de trials persistida, ou `null` se o circuito nunca a definiu.
+     */
+    public function getHalfOpenTrials(string $circuit): ?int;
 }

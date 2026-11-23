@@ -211,7 +211,7 @@ it('can recover again after a failed HALF-OPEN cycle', function (): void {
 });
 
 it('treats an OPEN circuit without last_tripped_at as eligible for recovery', function (): void {
-    $store = Mockery::mock(CircuitStoreInterface::class);
+    $store = Mockery::mock(CircuitStoreInterface::class)->shouldIgnoreMissing();
     $store->shouldReceive('getState')->with('legacy')->andReturn(
         CircuitState::OPEN,      // leitura inicial em run()
         CircuitState::HALF_OPEN, // releitura após a transição
@@ -258,7 +258,7 @@ it('only counts the failure when another process already opened the circuit duri
 });
 
 it('does not dispatch CircuitOpened when it loses the CLOSED -> OPEN race', function (): void {
-    $store = Mockery::mock(CircuitStoreInterface::class);
+    $store = Mockery::mock(CircuitStoreInterface::class)->shouldIgnoreMissing();
     $store->shouldReceive('getState')->with('racy')->andReturn(CircuitState::CLOSED);
     $store->shouldReceive('incrementFailures')->once()->with('racy', 'boom')->andReturn(2);
     $store->shouldReceive('transitionState')
@@ -275,7 +275,7 @@ it('does not dispatch CircuitOpened when it loses the CLOSED -> OPEN race', func
 });
 
 it('does not dispatch HALF-OPEN or CLOSED events when it loses those races', function (): void {
-    $store = Mockery::mock(CircuitStoreInterface::class);
+    $store = Mockery::mock(CircuitStoreInterface::class)->shouldIgnoreMissing();
     $store->shouldReceive('getState')->with('racy')->andReturn(
         CircuitState::OPEN,      // leitura inicial
         CircuitState::HALF_OPEN, // releitura: outro processo venceu OPEN -> HALF-OPEN
@@ -302,7 +302,7 @@ it('does not dispatch HALF-OPEN or CLOSED events when it loses those races', fun
 });
 
 it('reports a zero retry time when an OPEN circuit has no last_tripped_at and the recovery race is lost', function (): void {
-    $store = Mockery::mock(CircuitStoreInterface::class);
+    $store = Mockery::mock(CircuitStoreInterface::class)->shouldIgnoreMissing();
     $store->shouldReceive('getState')->with('racy')->andReturn(CircuitState::OPEN);
     $store->shouldReceive('getLastTrippedAt')->with('racy')->andReturnNull();
     $store->shouldReceive('getLastFailureReason')->with('racy')->andReturnNull();
@@ -387,6 +387,14 @@ it('shares state between instances of the same circuit name', function (): void 
     $this->circuit->trip();
 
     expect($other->getState())->toBe(CircuitState::OPEN);
+});
+
+it('rehydrates the persisted limits on a new instance of the same circuit', function (): void {
+    $again = Resilience::circuitBreaker('test-service');
+
+    expect($again->getFailureThreshold())->toBe(2)
+        ->and($again->getRecoveryTimeout())->toBe(10)
+        ->and($again->getHalfOpenTrials())->toBe(2);
 });
 
 /*

@@ -34,7 +34,12 @@ class CircuitBreakerManager extends Manager
     private ?AttributeCircuitBreakerRunner $runner = null;
 
     /**
-     * Cria um Circuit Breaker nomeado, com os padrões de `config/resilience-kit.php`.
+     * Cria um Circuit Breaker nomeado.
+     *
+     * Precedência dos limites:
+     *  1. defaults de `resilience-kit.circuit_breaker.*`;
+     *  2. entrada em `resilience-kit.circuits.{name}` (chaves omitidas herdam o global);
+     *  3. valores já persistidos no store (API fluente / atributo).
      *
      * O circuito é registrado no índice do driver (uma vez por processo) para
      * aparecer no dashboard mesmo antes da primeira execução.
@@ -57,9 +62,9 @@ class CircuitBreakerManager extends Manager
             $store,
             $this->container->make(Dispatcher::class),
             $this->container,
-            $this->intConfig('failure_threshold', 5),
-            $this->intConfig('recovery_timeout', 30),
-            $this->intConfig('half_open_trials', 3),
+            $this->limitFor($name, 'failure_threshold', 5),
+            $this->limitFor($name, 'recovery_timeout', 30),
+            $this->limitFor($name, 'half_open_trials', 3),
         );
     }
 
@@ -170,6 +175,32 @@ class CircuitBreakerManager extends Manager
         $prefix = $this->config->get('resilience-kit.circuit_breaker.prefix', 'resilience:cb:');
 
         return is_string($prefix) ? $prefix : 'resilience:cb:';
+    }
+
+    /**
+     * Resolve um limite: entrada nomeada em `circuits.{name}` ou default global.
+     */
+    private function limitFor(string $circuit, string $key, int $default): int
+    {
+        $named = $this->namedCircuitConfig($circuit)[$key] ?? null;
+
+        if (is_numeric($named)) {
+            return (int) $named;
+        }
+
+        return $this->intConfig($key, $default);
+    }
+
+    /**
+     * Lê a entrada de `resilience-kit.circuits.{name}`, se for um array.
+     *
+     * @return array<string, mixed>
+     */
+    private function namedCircuitConfig(string $circuit): array
+    {
+        $named = $this->config->get('resilience-kit.circuits.'.$circuit);
+
+        return is_array($named) ? $named : [];
     }
 
     /**

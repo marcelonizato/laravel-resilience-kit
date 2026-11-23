@@ -14,6 +14,12 @@ namespace LaravelResilienceKit\CircuitBreaker\Support;
  *  - `{prefix}{circuit}:half_open_successes`
  *  - `{prefix}{circuit}:last_tripped_at`
  *  - `{prefix}{circuit}:last_failure_reason`
+ *  - `{prefix}{circuit}:failure_threshold`
+ *  - `{prefix}{circuit}:recovery_timeout`
+ *  - `{prefix}{circuit}:half_open_trials`
+ *
+ * As três últimas são configuração do circuito e não entram em {@see self::all()}:
+ * o reset apaga estado e contadores, mas preserva os limites.
  */
 final readonly class CircuitKeys
 {
@@ -52,6 +58,38 @@ final readonly class CircuitKeys
         return $this->key($circuit, 'last_failure_reason');
     }
 
+    /** Chave do limite de falhas configurado para o circuito. */
+    public function failureThreshold(string $circuit): string
+    {
+        return $this->key($circuit, 'failure_threshold');
+    }
+
+    /** Chave do timeout de recuperação configurado, em segundos. */
+    public function recoveryTimeout(string $circuit): string
+    {
+        return $this->key($circuit, 'recovery_timeout');
+    }
+
+    /** Chave da quantidade de trials em HALF-OPEN configurada. */
+    public function halfOpenTrials(string $circuit): string
+    {
+        return $this->key($circuit, 'half_open_trials');
+    }
+
+    /**
+     * Chaves de configuração do circuito (preservadas no reset).
+     *
+     * @return list<string>
+     */
+    public function configuration(string $circuit): array
+    {
+        return [
+            $this->failureThreshold($circuit),
+            $this->recoveryTimeout($circuit),
+            $this->halfOpenTrials($circuit),
+        ];
+    }
+
     /** Chave do lock distribuído por circuito (usado pelo driver de cache). */
     public function lock(string $circuit): string
     {
@@ -71,7 +109,7 @@ final readonly class CircuitKeys
     }
 
     /**
-     * Todas as chaves de dados de um circuito (exclui locks e índice).
+     * Chaves de estado e contadores de um circuito (exclui configuração, locks e índice).
      *
      * @return list<string>
      */

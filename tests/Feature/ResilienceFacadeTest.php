@@ -35,6 +35,57 @@ it('creates circuit breakers using the defaults from the configuration', functio
         ->and($circuit->getHalfOpenTrials())->toBe(4);
 });
 
+it('applies named circuit limits from the configuration', function (): void {
+    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
+    config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
+    config()->set('resilience-kit.circuits.payment-gateway', [
+        'failure_threshold' => 3,
+        'recovery_timeout' => 60,
+        'half_open_trials' => 2,
+    ]);
+
+    $circuit = Resilience::circuitBreaker('payment-gateway');
+
+    expect($circuit->getFailureThreshold())->toBe(3)
+        ->and($circuit->getRecoveryTimeout())->toBe(60)
+        ->and($circuit->getHalfOpenTrials())->toBe(2);
+});
+
+it('inherits omitted named keys from the global circuit breaker defaults', function (): void {
+    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
+    config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
+    config()->set('resilience-kit.circuits.payment-gateway', [
+        'failure_threshold' => 3,
+    ]);
+
+    $circuit = Resilience::circuitBreaker('payment-gateway');
+
+    expect($circuit->getFailureThreshold())->toBe(3)
+        ->and($circuit->getRecoveryTimeout())->toBe(30)
+        ->and($circuit->getHalfOpenTrials())->toBe(3);
+});
+
+it('lets the fluent API override named circuit limits and persist them', function (): void {
+    config()->set('resilience-kit.circuits.payment-gateway', [
+        'failure_threshold' => 3,
+        'recovery_timeout' => 60,
+        'half_open_trials' => 2,
+    ]);
+
+    Resilience::circuitBreaker('payment-gateway')
+        ->failureThreshold(1)
+        ->recoveryTimeout(15)
+        ->halfOpenTrials(1);
+
+    $again = Resilience::circuitBreaker('payment-gateway');
+
+    expect($again->getFailureThreshold())->toBe(1)
+        ->and($again->getRecoveryTimeout())->toBe(15)
+        ->and($again->getHalfOpenTrials())->toBe(1);
+});
+
 it('registers the circuit in the store index as soon as it is created', function (): void {
     Resilience::circuitBreaker('payment-service')->getState();
 

@@ -45,6 +45,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Circuitos nomeados
+    |--------------------------------------------------------------------------
+    |
+    | Limites por nome de circuito. Chaves omitidas herdam o default global
+    | de `circuit_breaker` acima.
+    |
+    | Precedência ao criar um circuito:
+    |   1. defaults de `circuit_breaker.*`
+    |   2. entrada em `circuits.{name}` (se existir)
+    |   3. API fluente / #[WithCircuitBreaker] (persiste no store e vence)
+    |
+    */
+    'circuits' => [
+        // 'payment-gateway' => [
+        //     'failure_threshold' => 3,
+        //     'recovery_timeout' => 60,
+        //     'half_open_trials' => 2,
+        // ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Dashboard
     |--------------------------------------------------------------------------
     |

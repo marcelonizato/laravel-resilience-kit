@@ -148,6 +148,37 @@ it('resets state and counters but keeps the circuit registered', function (strin
         ->and($store->circuits())->toBe(['svc']);
 })->with('stores');
 
+it('persists circuit limits and keeps them across reset', function (string $driver): void {
+    $store = circuitStore($driver);
+
+    expect($store->getFailureThreshold('svc'))->toBeNull()
+        ->and($store->getRecoveryTimeout('svc'))->toBeNull()
+        ->and($store->getHalfOpenTrials('svc'))->toBeNull();
+
+    $store->setFailureThreshold('svc', 3);
+    $store->setRecoveryTimeout('svc', 60);
+    $store->setHalfOpenTrials('svc', 2);
+    $store->forceState('svc', CircuitState::OPEN);
+
+    $store->reset('svc');
+
+    expect($store->getFailureThreshold('svc'))->toBe(3)
+        ->and($store->getRecoveryTimeout('svc'))->toBe(60)
+        ->and($store->getHalfOpenTrials('svc'))->toBe(2)
+        ->and($store->getState('svc'))->toBe(CircuitState::CLOSED)
+        ->and($store->circuits())->toBe(['svc']);
+})->with('stores');
+
+it('isolates configured limits between circuits', function (string $driver): void {
+    $store = circuitStore($driver);
+
+    $store->setFailureThreshold('a', 3);
+    $store->setRecoveryTimeout('a', 60);
+
+    expect($store->getFailureThreshold('b'))->toBeNull()
+        ->and($store->getRecoveryTimeout('b'))->toBeNull();
+})->with('stores');
+
 it('isolates state between circuits', function (string $driver): void {
     $store = circuitStore($driver);
 

@@ -66,6 +66,15 @@ return [
         'prefix'             => 'resilience:cb:',
     ],
 
+    // Limites por circuito. Chaves omitidas herdam o default global acima.
+    'circuits' => [
+        'payment-gateway' => [
+            'failure_threshold' => 3,
+            'recovery_timeout' => 60,
+            'half_open_trials' => 2,
+        ],
+    ],
+
     'dashboard' => [
         'enabled'    => env('RESILIENCE_DASHBOARD_ENABLED', true),
         'path'       => env('RESILIENCE_DASHBOARD_PATH', 'resilience/dashboard'),
@@ -74,25 +83,34 @@ return [
 ];
 ```
 
+Precedência dos limites: defaults de `circuit_breaker` → `circuits.{name}` → API fluente / `#[WithCircuitBreaker]` (persiste no store e vence).
+
 ---
 
 ## 🚀 Uso Rápido: Circuit Breaker
 
 ### 1. Utilizando a Facade
 
-Proteger chamadas HTTP externas ou operações críticas contra falhas em cascata:
+Proteger chamadas HTTP externas ou operações críticas contra falhas em cascata. Com o circuito definido em `circuits`, basta o nome:
 
 ```php
 use LaravelResilienceKit\Facades\Resilience;
 use LaravelResilienceKit\CircuitBreaker\Exceptions\CircuitBreakerOpenException;
 
 $result = Resilience::circuitBreaker('payment-gateway')
-    ->failureThreshold(3)
-    ->recoveryTimeout(60)
     ->fallback(fn (\Throwable $e) => ['status' => 'degraded', 'message' => 'Service temporarily unavailable'])
     ->run(function () {
         return Http::timeout(2)->post('https://api.example.com/v1/charge');
     });
+```
+
+Override pontual (vence o config e persiste no store):
+
+```php
+Resilience::circuitBreaker('payment-gateway')
+    ->failureThreshold(1)
+    ->recoveryTimeout(15)
+    ->run(...);
 ```
 
 ### 2. Uso via Atributos PHP (PHP 8.2+)
@@ -125,7 +143,7 @@ $payments->processPayment($payload);   // protegido pelo circuito "payment-gatew
 Resilience::call($service, 'processPayment', [$payload]);
 ```
 
-Parâmetros do atributo (todos opcionais): `name` (padrão `Classe::método`), `fallback` (método da classe ou classe de `FallbackHandlerInterface`), `failureThreshold`, `recoveryTimeout` e `halfOpenTrials` (padrões vindos de `config/resilience-kit.php`).
+Parâmetros do atributo (todos opcionais): `name` (padrão `Classe::método`), `fallback` (método da classe ou classe de `FallbackHandlerInterface`), `failureThreshold`, `recoveryTimeout` e `halfOpenTrials` (quando omitidos, usam `circuits.{name}` ou os defaults de `circuit_breaker`).
 
 > ⚠️ Atributos PHP são apenas metadados: a proteção só é aplicada nas chamadas feitas **através do proxy** (`protect`) ou de `Resilience::call()`. O proxy **não** é uma instância da classe original (não satisfaz type hints); use `$payments->__unwrap()` para obter o objeto real. Chamadas diretas ao objeto original não são protegidas.
 
@@ -161,7 +179,7 @@ Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota defi
 | `GET`  | `/resilience/api/circuits` | Lista de circuitos e métricas |
 | `POST` | `/resilience/api/circuits/{name}/reset` | Reset manual (`404` se o circuito não existir) |
 
-> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) são os **padrões da configuração**; ajustes feitos por circuito (API fluente ou atributo) não são persistidos.
+> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem a precedência store (API fluente/atributo) → `circuits.{name}` → defaults de `circuit_breaker`. O reset manual preserva overrides persistidos no store.
 
 ### Autenticação e autorização
 

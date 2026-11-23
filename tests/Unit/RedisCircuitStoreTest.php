@@ -23,6 +23,9 @@ it('persists data using the keys defined in the spec', function (): void {
 
     $store->incrementFailures('payments', 'timeout');
     $store->incrementHalfOpenSuccesses('payments');
+    $store->setFailureThreshold('payments', 3);
+    $store->setRecoveryTimeout('payments', 60);
+    $store->setHalfOpenTrials('payments', 2);
     $store->forceState('payments', CircuitState::OPEN);
 
     expect($redis->command('get', ["{$prefix}payments:state"]))->toBe('open')
@@ -30,10 +33,13 @@ it('persists data using the keys defined in the spec', function (): void {
         ->and((int) $redis->command('get', ["{$prefix}payments:half_open_successes"]))->toBe(0)
         ->and((int) $redis->command('get', ["{$prefix}payments:last_tripped_at"]))->toBeGreaterThan(0)
         ->and($redis->command('get', ["{$prefix}payments:last_failure_reason"]))->toBe('timeout')
+        ->and((int) $redis->command('get', ["{$prefix}payments:failure_threshold"]))->toBe(3)
+        ->and((int) $redis->command('get', ["{$prefix}payments:recovery_timeout"]))->toBe(60)
+        ->and((int) $redis->command('get', ["{$prefix}payments:half_open_trials"]))->toBe(2)
         ->and($redis->command('sismember', ["{$prefix}circuits", 'payments']))->toBeTruthy();
 });
 
-it('removes every key of the circuit on reset', function (): void {
+it('removes state keys on reset and keeps the configured limits', function (): void {
     skipUnlessRedis();
 
     $prefix = StoreFactory::uniquePrefix();
@@ -41,12 +47,19 @@ it('removes every key of the circuit on reset', function (): void {
     $redis = StoreFactory::rawConnection();
 
     $store->incrementFailures('payments', 'timeout');
+    $store->setFailureThreshold('payments', 3);
+    $store->setRecoveryTimeout('payments', 60);
+    $store->setHalfOpenTrials('payments', 2);
     $store->forceState('payments', CircuitState::OPEN);
     $store->reset('payments');
 
     foreach (['state', 'failures', 'half_open_successes', 'last_tripped_at', 'last_failure_reason'] as $suffix) {
         expect((int) $redis->command('exists', ["{$prefix}payments:{$suffix}"]))->toBe(0);
     }
+
+    expect((int) $redis->command('get', ["{$prefix}payments:failure_threshold"]))->toBe(3)
+        ->and((int) $redis->command('get', ["{$prefix}payments:recovery_timeout"]))->toBe(60)
+        ->and((int) $redis->command('get', ["{$prefix}payments:half_open_trials"]))->toBe(2);
 });
 
 /**

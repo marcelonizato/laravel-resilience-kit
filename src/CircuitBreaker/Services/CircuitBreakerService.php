@@ -41,6 +41,11 @@ use UnexpectedValueException;
  * O fallback é acionado quando o circuito está OPEN e também quando a própria
  * ação falha (a falha é sempre contabilizada antes). Sem fallback, a exceção
  * original da ação é relançada.
+ *
+ * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` gravam o
+ * limite no store. Uma instância nova do mesmo circuito (incluindo a criada
+ * pelo dashboard) reidrata esses valores; o que não tiver sido definido usa
+ * o padrão recebido no construtor (`circuits.{name}` ou `circuit_breaker.*`).
  */
 class CircuitBreakerService implements CircuitBreakerInterface
 {
@@ -71,9 +76,21 @@ class CircuitBreakerService implements CircuitBreakerInterface
         int $recoveryTimeout = 30,
         int $halfOpenTrials = 3,
     ) {
-        $this->failureThreshold($failureThreshold);
-        $this->recoveryTimeout($recoveryTimeout);
-        $this->halfOpenTrials($halfOpenTrials);
+        $this->applyFailureThreshold($this->resolveLimit(
+            $store->getFailureThreshold($name),
+            $failureThreshold,
+            1,
+        ));
+        $this->applyRecoveryTimeout($this->resolveLimit(
+            $store->getRecoveryTimeout($name),
+            $recoveryTimeout,
+            0,
+        ));
+        $this->applyHalfOpenTrials($this->resolveLimit(
+            $store->getHalfOpenTrials($name),
+            $halfOpenTrials,
+            1,
+        ));
     }
 
     /**
@@ -89,11 +106,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
      */
     public function failureThreshold(int $failures): static
     {
-        if ($failures < 1) {
-            throw new InvalidArgumentException('The failure threshold must be at least 1.');
-        }
-
-        $this->failureThreshold = $failures;
+        $this->applyFailureThreshold($failures);
+        $this->store->setFailureThreshold($this->name, $failures);
 
         return $this;
     }
@@ -103,11 +117,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
      */
     public function recoveryTimeout(int $seconds): static
     {
-        if ($seconds < 0) {
-            throw new InvalidArgumentException('The recovery timeout cannot be negative.');
-        }
-
-        $this->recoveryTimeout = $seconds;
+        $this->applyRecoveryTimeout($seconds);
+        $this->store->setRecoveryTimeout($this->name, $seconds);
 
         return $this;
     }
@@ -117,11 +128,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
      */
     public function halfOpenTrials(int $trials): static
     {
-        if ($trials < 1) {
-            throw new InvalidArgumentException('The number of half-open trials must be at least 1.');
-        }
-
-        $this->halfOpenTrials = $trials;
+        $this->applyHalfOpenTrials($trials);
+        $this->store->setHalfOpenTrials($this->name, $trials);
 
         return $this;
     }
@@ -370,6 +378,50 @@ class CircuitBreakerService implements CircuitBreakerInterface
             $retryAfter,
             $this->store->getLastFailureReason($this->name),
         );
+    }
+
+    /**
+     * Valida e aplica o limite de falhas na instância, sem persistir.
+     */
+    private function applyFailureThreshold(int $failures): void
+    {
+        if ($failures < 1) {
+            throw new InvalidArgumentException('The failure threshold must be at least 1.');
+        }
+
+        $this->failureThreshold = $failures;
+    }
+
+    /**
+     * Valida e aplica o timeout de recuperação na instância, sem persistir.
+     */
+    private function applyRecoveryTimeout(int $seconds): void
+    {
+        if ($seconds < 0) {
+            throw new InvalidArgumentException('The recovery timeout cannot be negative.');
+        }
+
+        $this->recoveryTimeout = $seconds;
+    }
+
+    /**
+     * Valida e aplica a quantidade de trials na instância, sem persistir.
+     */
+    private function applyHalfOpenTrials(int $trials): void
+    {
+        if ($trials < 1) {
+            throw new InvalidArgumentException('The number of half-open trials must be at least 1.');
+        }
+
+        $this->halfOpenTrials = $trials;
+    }
+
+    /**
+     * Prefere o valor persistido quando ele respeita o mínimo; senão, o padrão.
+     */
+    private function resolveLimit(?int $stored, int $fallback, int $minimum): int
+    {
+        return $stored !== null && $stored >= $minimum ? $stored : $fallback;
     }
 
     /**

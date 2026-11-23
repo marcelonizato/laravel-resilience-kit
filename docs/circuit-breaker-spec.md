@@ -53,6 +53,23 @@ Para suportar alta concorrência sem *race conditions* em ambiente distribuído:
 - `resilience:cb:{circuit_name}:half_open_successes` (int - atômico via INCR)
 - `resilience:cb:{circuit_name}:last_tripped_at` (timestamp UNIX)
 - `resilience:cb:{circuit_name}:last_failure_reason` (string com a mensagem da exceção)
+- `resilience:cb:{circuit_name}:failure_threshold` (int — limite configurado no circuito; preservado no reset)
+- `resilience:cb:{circuit_name}:recovery_timeout` (int, segundos — preservado no reset)
+- `resilience:cb:{circuit_name}:half_open_trials` (int — preservado no reset)
+
+### Configuração por circuito (`config/resilience-kit.php`):
+
+```php
+'circuits' => [
+    'payment-gateway' => [
+        'failure_threshold' => 3,
+        'recovery_timeout' => 60,
+        'half_open_trials' => 2,
+    ],
+],
+```
+
+Precedência ao criar um circuito: defaults de `circuit_breaker.*` → `circuits.{name}` (chaves omitidas herdam o global) → valores persistidos no store (API fluente / `#[WithCircuitBreaker]`).
 
 ---
 

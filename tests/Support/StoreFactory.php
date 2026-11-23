@@ -121,6 +121,7 @@ final class StoreFactory
         foreach (self::$redisStores as ['store' => $store, 'keys' => $keys, 'connection' => $connection]) {
             foreach ($store->circuits() as $circuit) {
                 $store->reset($circuit);
+                $connection->command('del', $keys->configuration($circuit));
             }
 
             $connection->command('del', [$keys->index()]);
