@@ -119,6 +119,32 @@ Resilience::circuitBreaker('payment-gateway')
     ->run(...);
 ```
 
+Demonstração em `routes/web.php`. Com janela 3, mínimo 3 e taxa 100%, três falhas seguidas abrem o circuito. `/demo/ok` grava um sucesso nessa mesma amostra:
+
+```php
+use LaravelResilienceKit\Facades\Resilience;
+
+Route::get('/demo/ok', function () {
+    return Resilience::circuitBreaker('payment-gateway')
+        ->slidingWindowSize(3)
+        ->minimumCalls(3)
+        ->failureRateThreshold(100)
+        ->recoveryTimeout(30)
+        ->fallback(fn (Throwable $e) => 'fallback')
+        ->run(fn () => 'sucesso');
+});
+
+Route::get('/demo/fail', function () {
+    return Resilience::circuitBreaker('payment-gateway')
+        ->slidingWindowSize(3)
+        ->minimumCalls(3)
+        ->failureRateThreshold(100)
+        ->recoveryTimeout(30)
+        ->fallback(fn (Throwable $e) => 'fallback: '.$e->getMessage())
+        ->run(fn () => throw new RuntimeException('serviço fora do ar'));
+});
+```
+
 ### 2. Uso via Atributos PHP (PHP 8.2+)
 
 Anote os métodos de Services (ou qualquer classe) e invoque-os através de `Resilience::protect()`:
