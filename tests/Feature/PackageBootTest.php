@@ -9,7 +9,9 @@ it('registers the service provider', function (): void {
 });
 
 it('merges the default package configuration', function (): void {
-    expect(config('resilience-kit.circuit_breaker.failure_threshold'))->toBe(5)
+    expect(config('resilience-kit.circuit_breaker.sliding_window_size'))->toBe(10)
+        ->and(config('resilience-kit.circuit_breaker.minimum_calls'))->toBe(10)
+        ->and(config('resilience-kit.circuit_breaker.failure_rate_threshold'))->toBe(50)
         ->and(config('resilience-kit.circuit_breaker.recovery_timeout'))->toBe(30)
         ->and(config('resilience-kit.circuit_breaker.half_open_trials'))->toBe(3)
         ->and(config('resilience-kit.circuit_breaker.prefix'))->toBe('resilience:cb:')

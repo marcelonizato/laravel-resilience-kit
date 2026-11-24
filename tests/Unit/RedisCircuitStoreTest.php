@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Redis\Connections\Connection;
 use LaravelResilienceKit\CircuitBreaker\Drivers\RedisCircuitStore;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 use LaravelResilienceKit\Tests\Support\StoreFactory;
 use Symfony\Component\Process\Process;
 
@@ -21,19 +22,23 @@ it('persists data using the keys defined in the spec', function (): void {
     $store = StoreFactory::makeRedis($prefix);
     $redis = StoreFactory::rawConnection();
 
-    $store->incrementFailures('payments', 'timeout');
+    $store->recordOutcome('payments', true, 10, 'timeout');
     $store->incrementHalfOpenSuccesses('payments');
-    $store->setFailureThreshold('payments', 3);
+    $store->setSlidingWindowSize('payments', 20);
+    $store->setMinimumCalls('payments', 8);
+    $store->setFailureRateThreshold('payments', 40);
     $store->setRecoveryTimeout('payments', 60);
     $store->setHalfOpenTrials('payments', 2);
     $store->forceState('payments', CircuitState::OPEN);
 
     expect($redis->command('get', ["{$prefix}payments:state"]))->toBe('open')
-        ->and((int) $redis->command('get', ["{$prefix}payments:failures"]))->toBe(1)
+        ->and($redis->command('lrange', ["{$prefix}payments:window", 0, -1]))->toBe(['1'])
         ->and((int) $redis->command('get', ["{$prefix}payments:half_open_successes"]))->toBe(0)
         ->and((int) $redis->command('get', ["{$prefix}payments:last_tripped_at"]))->toBeGreaterThan(0)
         ->and($redis->command('get', ["{$prefix}payments:last_failure_reason"]))->toBe('timeout')
-        ->and((int) $redis->command('get', ["{$prefix}payments:failure_threshold"]))->toBe(3)
+        ->and((int) $redis->command('get', ["{$prefix}payments:sliding_window_size"]))->toBe(20)
+        ->and((int) $redis->command('get', ["{$prefix}payments:minimum_calls"]))->toBe(8)
+        ->and((int) $redis->command('get', ["{$prefix}payments:failure_rate_threshold"]))->toBe(40)
         ->and((int) $redis->command('get', ["{$prefix}payments:recovery_timeout"]))->toBe(60)
         ->and((int) $redis->command('get', ["{$prefix}payments:half_open_trials"]))->toBe(2)
         ->and($redis->command('sismember', ["{$prefix}circuits", 'payments']))->toBeTruthy();
@@ -46,18 +51,22 @@ it('removes state keys on reset and keeps the configured limits', function (): v
     $store = StoreFactory::makeRedis($prefix);
     $redis = StoreFactory::rawConnection();
 
-    $store->incrementFailures('payments', 'timeout');
-    $store->setFailureThreshold('payments', 3);
+    $store->recordOutcome('payments', true, 10, 'timeout');
+    $store->setSlidingWindowSize('payments', 20);
+    $store->setMinimumCalls('payments', 8);
+    $store->setFailureRateThreshold('payments', 40);
     $store->setRecoveryTimeout('payments', 60);
     $store->setHalfOpenTrials('payments', 2);
     $store->forceState('payments', CircuitState::OPEN);
     $store->reset('payments');
 
-    foreach (['state', 'failures', 'half_open_successes', 'last_tripped_at', 'last_failure_reason'] as $suffix) {
+    foreach (['state', 'window', 'half_open_successes', 'last_tripped_at', 'last_failure_reason'] as $suffix) {
         expect((int) $redis->command('exists', ["{$prefix}payments:{$suffix}"]))->toBe(0);
     }
 
-    expect((int) $redis->command('get', ["{$prefix}payments:failure_threshold"]))->toBe(3)
+    expect((int) $redis->command('get', ["{$prefix}payments:sliding_window_size"]))->toBe(20)
+        ->and((int) $redis->command('get', ["{$prefix}payments:minimum_calls"]))->toBe(8)
+        ->and((int) $redis->command('get', ["{$prefix}payments:failure_rate_threshold"]))->toBe(40)
         ->and((int) $redis->command('get', ["{$prefix}payments:recovery_timeout"]))->toBe(60)
         ->and((int) $redis->command('get', ["{$prefix}payments:half_open_trials"]))->toBe(2);
 });
@@ -120,7 +129,7 @@ it('does not lose or duplicate failure increments under concurrency', function (
     sort($values);
 
     expect($values)->toBe(range(1, 400))
-        ->and($store->getFailures('counter'))->toBe(400)
+        ->and($store->getWindow('counter', 1000))->toEqual(new CallWindow(400, 400))
         ->and($store->getLastFailureReason('counter'))->toBe('worker');
 });
 
@@ -136,16 +145,19 @@ it('sends EVAL in the predis format (script, numKeys, ...keys, ...args) for non-
     $connection->shouldReceive('command')
         ->once()
         ->withArgs(fn (string $command, array $parameters): bool => $command === 'eval'
-            && is_string($parameters[0]) && str_contains($parameters[0], "redis.call('INCR'")
+            && is_string($parameters[0]) && str_contains($parameters[0], "redis.call('LPUSH'")
             && array_slice($parameters, 1) === [
                 2,
-                'resilience:cb:svc:failures',
+                'resilience:cb:svc:window',
                 'resilience:cb:svc:last_failure_reason',
+                '1',
+                '10',
                 'timeout',
             ])
-        ->andReturn(3);
+        ->andReturn([3, 2]);
 
-    expect((new RedisCircuitStore($connection))->incrementFailures('svc', 'timeout'))->toBe(3);
+    expect((new RedisCircuitStore($connection))->recordOutcome('svc', true, 10, 'timeout'))
+        ->toEqual(new CallWindow(3, 2));
 });
 
 it('reports a won transition only when the script returns 1', function (mixed $scriptResult, bool $expected): void {
@@ -173,11 +185,12 @@ it('treats a non-array SMEMBERS reply as no circuits', function (): void {
 it('normalizes missing keys (false) to defaults', function (): void {
     $connection = Mockery::mock(Connection::class);
     $connection->shouldReceive('command')->with('get', Mockery::any())->andReturn(false);
+    $connection->shouldReceive('command')->with('eval', Mockery::any())->andReturn(false);
 
     $store = new RedisCircuitStore($connection);
 
     expect($store->getState('svc'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('svc'))->toBe(0)
+        ->and($store->getWindow('svc', 10))->toEqual(CallWindow::empty())
         ->and($store->getLastTrippedAt('svc'))->toBeNull()
         ->and($store->getLastFailureReason('svc'))->toBeNull();
 });

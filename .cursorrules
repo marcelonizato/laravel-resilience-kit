@@ -105,7 +105,9 @@ use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
 
 beforeEach(function () {
     $this->circuit = Resilience::circuitBreaker('test-service')
-        ->failureThreshold(2)
+        ->slidingWindowSize(2)
+        ->minimumCalls(2)
+        ->failureRateThreshold(100)
         ->recoveryTimeout(10)
         ->halfOpenTrials(2);
 });

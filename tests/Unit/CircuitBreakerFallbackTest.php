@@ -8,8 +8,7 @@ use LaravelResilienceKit\Facades\Resilience;
 use LaravelResilienceKit\Tests\Support\StubFallbackHandler;
 
 it('executes the fallback and blocks execution when the circuit is open', function (): void {
-    $circuit = Resilience::circuitBreaker('external-api')
-        ->failureThreshold(1)
+    $circuit = openAfterConsecutiveFailures(Resilience::circuitBreaker('external-api'), 1)
         ->recoveryTimeout(60)
         ->fallback(fn (Throwable $e) => 'fallback-data');
 
@@ -44,8 +43,7 @@ it('passes a CircuitBreakerOpenException to the fallback when the circuit is ope
 });
 
 it('executes the fallback when the action fails, counting the failure first', function (): void {
-    $circuit = Resilience::circuitBreaker('svc')
-        ->failureThreshold(3)
+    $circuit = openAfterConsecutiveFailures(Resilience::circuitBreaker('svc'), 3)
         ->fallback(fn (Throwable $e) => 'recovered from: '.$e->getMessage());
 
     $result = $circuit->run(failingAction('boom'));
@@ -56,8 +54,7 @@ it('executes the fallback when the action fails, counting the failure first', fu
 });
 
 it('opens the circuit through failures even when a fallback masks the exceptions', function (): void {
-    $circuit = Resilience::circuitBreaker('svc')
-        ->failureThreshold(2)
+    $circuit = openAfterConsecutiveFailures(Resilience::circuitBreaker('svc'), 2)
         ->fallback(fn () => 'fallback');
 
     $circuit->run(failingAction());

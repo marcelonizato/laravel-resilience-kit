@@ -37,8 +37,8 @@ class CircuitBreakerManager extends Manager
      * Cria um Circuit Breaker nomeado.
      *
      * Precedência ao criar a instância, para cada limite:
-     *  1. valor persistido por `failureThreshold()`, `recoveryTimeout()` ou
-     *     `halfOpenTrials()` (o dashboard mostra esse valor);
+     *  1. valor persistido pela API fluente ou por `#[WithCircuitBreaker]`
+     *     (o dashboard mostra esse valor);
      *  2. entrada em `resilience-kit.circuits.{name}`;
      *  3. default de `resilience-kit.circuit_breaker.*`.
      *
@@ -65,7 +65,9 @@ class CircuitBreakerManager extends Manager
             $store,
             $this->container->make(Dispatcher::class),
             $this->container,
-            $this->limitFor($name, 'failure_threshold', 5),
+            $this->limitFor($name, 'sliding_window_size', 10),
+            $this->limitFor($name, 'minimum_calls', 10),
+            $this->limitFor($name, 'failure_rate_threshold', 50),
             $this->limitFor($name, 'recovery_timeout', 30),
             $this->limitFor($name, 'half_open_trials', 3),
         );

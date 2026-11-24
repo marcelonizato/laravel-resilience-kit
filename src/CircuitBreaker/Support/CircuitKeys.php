@@ -10,16 +10,18 @@ namespace LaravelResilienceKit\CircuitBreaker\Support;
  * Layout definido em docs/circuit-breaker-spec.md (seção 2):
  *
  *  - `{prefix}{circuit}:state`
- *  - `{prefix}{circuit}:failures`
+ *  - `{prefix}{circuit}:window` (lista das últimas chamadas: `1` falha, `0` sucesso)
  *  - `{prefix}{circuit}:half_open_successes`
  *  - `{prefix}{circuit}:last_tripped_at`
  *  - `{prefix}{circuit}:last_failure_reason`
- *  - `{prefix}{circuit}:failure_threshold`
+ *  - `{prefix}{circuit}:sliding_window_size`
+ *  - `{prefix}{circuit}:minimum_calls`
+ *  - `{prefix}{circuit}:failure_rate_threshold`
  *  - `{prefix}{circuit}:recovery_timeout`
  *  - `{prefix}{circuit}:half_open_trials`
  *
- * As três últimas são configuração do circuito e não entram em {@see self::all()}:
- * o reset apaga estado e contadores, mas preserva os limites.
+ * As cinco últimas são configuração do circuito e não entram em {@see self::all()}:
+ * o reset apaga estado e a janela, mas preserva os limites.
  */
 final readonly class CircuitKeys
 {
@@ -34,10 +36,10 @@ final readonly class CircuitKeys
         return $this->key($circuit, 'state');
     }
 
-    /** Chave do contador atômico de falhas. */
-    public function failures(string $circuit): string
+    /** Chave da janela deslizante (lista, mais recente primeiro). */
+    public function window(string $circuit): string
     {
-        return $this->key($circuit, 'failures');
+        return $this->key($circuit, 'window');
     }
 
     /** Chave do contador atômico de sucessos em half-open. */
@@ -58,10 +60,22 @@ final readonly class CircuitKeys
         return $this->key($circuit, 'last_failure_reason');
     }
 
-    /** Chave do limite de falhas configurado para o circuito. */
-    public function failureThreshold(string $circuit): string
+    /** Chave do tamanho da janela deslizante configurado para o circuito. */
+    public function slidingWindowSize(string $circuit): string
     {
-        return $this->key($circuit, 'failure_threshold');
+        return $this->key($circuit, 'sliding_window_size');
+    }
+
+    /** Chave do volume mínimo de chamadas configurado para o circuito. */
+    public function minimumCalls(string $circuit): string
+    {
+        return $this->key($circuit, 'minimum_calls');
+    }
+
+    /** Chave da taxa de falha (porcentagem) configurada para o circuito. */
+    public function failureRateThreshold(string $circuit): string
+    {
+        return $this->key($circuit, 'failure_rate_threshold');
     }
 
     /** Chave do timeout de recuperação configurado, em segundos. */
@@ -84,7 +98,9 @@ final readonly class CircuitKeys
     public function configuration(string $circuit): array
     {
         return [
-            $this->failureThreshold($circuit),
+            $this->slidingWindowSize($circuit),
+            $this->minimumCalls($circuit),
+            $this->failureRateThreshold($circuit),
             $this->recoveryTimeout($circuit),
             $this->halfOpenTrials($circuit),
         ];
@@ -117,7 +133,7 @@ final readonly class CircuitKeys
     {
         return [
             $this->state($circuit),
-            $this->failures($circuit),
+            $this->window($circuit),
             $this->halfOpenSuccesses($circuit),
             $this->lastTrippedAt($circuit),
             $this->lastFailureReason($circuit),

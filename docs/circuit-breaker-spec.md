@@ -28,8 +28,9 @@ O Circuit Breaker opera sob 3 estados fundamentais:
 
 1. **CLOSED (Fechado - Operação Normal):**
    - Requisições executam a ação encapsulada normalmente.
-   - Exceções incrementam o contador de falhas (`failures_count`).
-   - Se `failures_count >= failure_threshold`, o estado transita para `OPEN`, registra `last_tripped_at` e dispara o evento `CircuitOpened`.
+   - Cada resultado entra na janela deslizante das últimas `sliding_window_size` chamadas (`1` = falha, `0` = sucesso). Um sucesso não zera as falhas que ainda estão na janela; o resultado mais antigo sai quando a janela enche.
+   - A taxa só é avaliada quando a janela tem pelo menos `minimum_calls` chamadas (se esse valor for maior que a janela, vale o tamanho da janela).
+   - Se `failures * 100 >= failure_rate_threshold * calls`, o estado transita para `OPEN`, registra `last_tripped_at` e dispara o evento `CircuitOpened`. Isso pode acontecer também num sucesso, quando essa chamada completa o volume mínimo e a taxa já está no limite.
 
 2. **OPEN (Aberto - Curto-Circuito Ativo):**
    - Requisições não chegam ao serviço protegido; falham instantaneamente lançando `CircuitBreakerOpenException` ou executando o `fallback`.
@@ -37,8 +38,8 @@ O Circuit Breaker opera sob 3 estados fundamentais:
    - Após a expiração de `recovery_timeout`, a próxima requisição altera o estado para `HALF-OPEN`.
 
 3. **HALF-OPEN (Meio-Aberto - Teste de Recuperação):**
-   - Aceita um número limitado de requisições de teste (`half_open_trials`, padrão: 3).
-   - Se todas as `half_open_trials` forem bem-sucedidas: o contador de falhas é zerado, o circuito retorna a `CLOSED` e dispara o evento `CircuitClosed`.
+   - Aceita um número limitado de requisições de teste (`half_open_trials`, padrão: 3). Essas provas não entram na janela.
+   - Se todas as `half_open_trials` forem bem-sucedidas: a janela é apagada, o circuito retorna a `CLOSED` e dispara o evento `CircuitClosed`.
    - Se ocorrer **qualquer falha** no estado `HALF-OPEN`: o circuito volta imediatamente para `OPEN`, reinicia o timer de `recovery_timeout` e dispara o evento `CircuitOpened`.
 
 ---
@@ -49,11 +50,13 @@ Para suportar alta concorrência sem *race conditions* em ambiente distribuído:
 
 ### Chaves no Redis / Cache Store:
 - `resilience:cb:{circuit_name}:state` (string: `closed` | `open` | `half_open`)
-- `resilience:cb:{circuit_name}:failures` (int - atômico via INCR)
+- `resilience:cb:{circuit_name}:window` (lista Redis, mais recente primeiro: `1` falha, `0` sucesso; atômica via Lua `LPUSH` + `LTRIM`)
 - `resilience:cb:{circuit_name}:half_open_successes` (int - atômico via INCR)
 - `resilience:cb:{circuit_name}:last_tripped_at` (timestamp UNIX)
 - `resilience:cb:{circuit_name}:last_failure_reason` (string com a mensagem da exceção)
-- `resilience:cb:{circuit_name}:failure_threshold` (int — limite configurado no circuito; preservado no reset)
+- `resilience:cb:{circuit_name}:sliding_window_size` (int — preservado no reset)
+- `resilience:cb:{circuit_name}:minimum_calls` (int — preservado no reset)
+- `resilience:cb:{circuit_name}:failure_rate_threshold` (int, porcentagem 1–100 — preservado no reset)
 - `resilience:cb:{circuit_name}:recovery_timeout` (int, segundos — preservado no reset)
 - `resilience:cb:{circuit_name}:half_open_trials` (int — preservado no reset)
 
@@ -62,7 +65,9 @@ Para suportar alta concorrência sem *race conditions* em ambiente distribuído:
 ```php
 'circuits' => [
     'payment-gateway' => [
-        'failure_threshold' => 3,
+        'sliding_window_size' => 20,
+        'minimum_calls' => 10,
+        'failure_rate_threshold' => 50,
         'recovery_timeout' => 60,
         'half_open_trials' => 2,
     ],
@@ -81,18 +86,18 @@ Toda a lógica da máquina de estados e do armazenamento DEVE possuir cobertura 
 
 1. **Testes do Estado CLOSED:**
    - Deve retornar o resultado correto da ação no caminho feliz.
-   - Deve incrementar o contador de falhas ao capturar exceção.
-   - Não deve abrir o circuito se as falhas estiverem abaixo do `failure_threshold`.
+   - Deve gravar a falha na janela ao capturar exceção, sem apagar as falhas anteriores que ainda cabem nela.
+   - Não deve abrir o circuito antes de `minimum_calls` nem abaixo de `failure_rate_threshold`.
 
 2. **Testes do Estado OPEN e Fallbacks:**
-   - Deve transitar para `OPEN` exatamente ao atingir o `failure_threshold`.
+   - Deve transitar para `OPEN` quando a taxa de falha da janela atinge `failure_rate_threshold` com o volume mínimo.
    - Deve lançar `CircuitBreakerOpenException` quando o circuito estiver aberto e nenhum fallback for fornecido.
    - Deve executar o callback de `fallback` quando fornecido via Closure ou Classe Handler.
    - Deve disparar o evento `CircuitOpened` na transição.
 
 3. **Testes do Estado HALF-OPEN e Recuperação:**
    - Deve transitar de `OPEN` para `HALF-OPEN` após a passagem do `recovery_timeout`.
-   - Deve redefinir o estado para `CLOSED` e zerar falhas após `half_open_trials` requisições bem-sucedidas.
+   - Deve redefinir o estado para `CLOSED` e apagar a janela após `half_open_trials` requisições bem-sucedidas.
    - Deve reabrir o circuito imediatamente se uma requisição falhar durante o estado `HALF-OPEN`.
 
 4. **Testes de Reset Manual:**
@@ -111,7 +116,9 @@ use LaravelResilienceKit\Facades\Resilience;
 
 it('executes fallback and blocks execution when circuit is open', function () {
     $circuit = Resilience::circuitBreaker('external-api')
-        ->failureThreshold(1)
+        ->slidingWindowSize(1)
+        ->minimumCalls(1)
+        ->failureRateThreshold(100)
         ->recoveryTimeout(60)
         ->fallback(fn (\Throwable $e) => 'fallback-data');
 
@@ -209,13 +216,13 @@ it('can fetch circuit status list via dashboard api', function () {
         ->assertStatus(200)
         ->assertJsonStructure([
             'circuits' => [
-                '*' => ['name', 'state', 'failures_count', 'failure_threshold', 'recovery_timeout']
+                '*' => ['name', 'state', 'calls_count', 'failures_count', 'failure_rate', 'failure_rate_threshold', 'recovery_timeout']
             ]
         ]);
 });
 
 it('can manually reset a circuit via dashboard api', function () {
-    $cb = Resilience::circuitBreaker('order-service')->failureThreshold(1);
+    $cb = Resilience::circuitBreaker('order-service')->slidingWindowSize(1)->minimumCalls(1)->failureRateThreshold(100);
     
     try {
         $cb->run(fn () => throw new Exception('Error'));

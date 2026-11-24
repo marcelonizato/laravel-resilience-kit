@@ -12,6 +12,7 @@ use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 use LaravelResilienceKit\CircuitBreaker\Contracts\CircuitStoreInterface;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 use LaravelResilienceKit\CircuitBreaker\Support\CircuitKeys;
 
 /**
@@ -122,28 +123,54 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
-    public function incrementFailures(string $circuit, ?string $reason = null): int
+    public function recordOutcome(string $circuit, bool $failure, int $windowSize, ?string $reason = null): CallWindow
     {
         $this->register($circuit);
 
-        return $this->withCircuitLock($circuit, function () use ($circuit, $reason): int {
-            $failures = $this->getFailures($circuit) + 1;
-            $this->cache->forever($this->keys->failures($circuit), $failures);
-
-            if ($reason !== null && $reason !== '') {
+        return $this->withCircuitLock($circuit, function () use ($circuit, $failure, $windowSize, $reason): CallWindow {
+            if ($failure && $reason !== null && $reason !== '') {
                 $this->cache->forever($this->keys->lastFailureReason($circuit), $reason);
             }
 
-            return $failures;
+            $outcomes = $this->readOutcomes($circuit);
+            array_unshift($outcomes, $failure ? 1 : 0);
+            $outcomes = array_slice($outcomes, 0, max(1, $windowSize));
+            $this->cache->forever($this->keys->window($circuit), $outcomes);
+
+            return CallWindow::fromOutcomes($outcomes);
         });
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailures(string $circuit): int
+    public function getWindow(string $circuit, int $windowSize): CallWindow
     {
-        return $this->readInt($this->keys->failures($circuit));
+        return $this->withCircuitLock($circuit, function () use ($circuit, $windowSize): CallWindow {
+            $outcomes = array_slice($this->readOutcomes($circuit), 0, max(1, $windowSize));
+
+            if ($outcomes === []) {
+                $this->cache->forget($this->keys->window($circuit));
+            } else {
+                $this->cache->forever($this->keys->window($circuit), $outcomes);
+            }
+
+            return CallWindow::fromOutcomes($outcomes);
+        });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function rememberFailureReason(string $circuit, string $reason): void
+    {
+        $this->register($circuit);
+
+        if ($reason === '') {
+            return;
+        }
+
+        $this->cache->forever($this->keys->lastFailureReason($circuit), $reason);
     }
 
     /**
@@ -231,25 +258,73 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
-    public function setFailureThreshold(string $circuit, int $threshold): void
+    public function setSlidingWindowSize(string $circuit, int $size): void
     {
-        $this->writeConfig($circuit, $this->keys->failureThreshold($circuit), $threshold);
+        $this->writeConfig($circuit, $this->keys->slidingWindowSize($circuit), $size);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailureThreshold(string $circuit): ?int
+    public function getSlidingWindowSize(string $circuit): ?int
     {
-        return $this->readOptionalInt($this->keys->failureThreshold($circuit));
+        return $this->readOptionalInt($this->keys->slidingWindowSize($circuit));
     }
 
     /**
      * {@inheritDoc}
      */
-    public function forgetFailureThreshold(string $circuit): void
+    public function forgetSlidingWindowSize(string $circuit): void
     {
-        $this->cache->forget($this->keys->failureThreshold($circuit));
+        $this->cache->forget($this->keys->slidingWindowSize($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setMinimumCalls(string $circuit, int $calls): void
+    {
+        $this->writeConfig($circuit, $this->keys->minimumCalls($circuit), $calls);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getMinimumCalls(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->minimumCalls($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetMinimumCalls(string $circuit): void
+    {
+        $this->cache->forget($this->keys->minimumCalls($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setFailureRateThreshold(string $circuit, int $percentage): void
+    {
+        $this->writeConfig($circuit, $this->keys->failureRateThreshold($circuit), $percentage);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getFailureRateThreshold(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->failureRateThreshold($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetFailureRateThreshold(string $circuit): void
+    {
+        $this->cache->forget($this->keys->failureRateThreshold($circuit));
     }
 
     /**
@@ -334,7 +409,7 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
 
     private function applyClosed(string $circuit): void
     {
-        $this->cache->forget($this->keys->failures($circuit));
+        $this->cache->forget($this->keys->window($circuit));
         $this->cache->forget($this->keys->halfOpenSuccesses($circuit));
     }
 
@@ -350,6 +425,30 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
         }
 
         return array_values(array_filter($index, is_string(...)));
+    }
+
+    /**
+     * Lê a janela persistida como lista de `1` (falha) e `0` (sucesso).
+     *
+     * @return list<int>
+     */
+    private function readOutcomes(string $circuit): array
+    {
+        $value = $this->cache->get($this->keys->window($circuit));
+
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $outcomes = [];
+
+        foreach ($value as $outcome) {
+            if ($outcome === 0 || $outcome === 1 || $outcome === '0' || $outcome === '1') {
+                $outcomes[] = (int) $outcome;
+            }
+        }
+
+        return $outcomes;
     }
 
     private function readInt(string $key): int

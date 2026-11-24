@@ -59,7 +59,9 @@ return [
     'default_driver' => env('RESILIENCE_DRIVER', 'redis'),
 
     'circuit_breaker' => [
-        'failure_threshold' => env('RESILIENCE_CB_FAILURE_THRESHOLD', 5),
+        'sliding_window_size' => env('RESILIENCE_CB_SLIDING_WINDOW_SIZE', 10),
+        'minimum_calls' => env('RESILIENCE_CB_MINIMUM_CALLS', 10),
+        'failure_rate_threshold' => env('RESILIENCE_CB_FAILURE_RATE_THRESHOLD', 50), // %
         'recovery_timeout'  => env('RESILIENCE_CB_RECOVERY_TIMEOUT', 30), // segundos
         'half_open_trials'  => env('RESILIENCE_CB_HALF_OPEN_TRIALS', 3),
         'cache_store'        => env('RESILIENCE_CB_CACHE_STORE', 'redis'),
@@ -69,7 +71,9 @@ return [
     // Limites por circuito. Chaves omitidas herdam o default global acima.
     'circuits' => [
         'payment-gateway' => [
-            'failure_threshold' => 3,
+            'sliding_window_size' => 20,
+            'minimum_calls' => 10,
+            'failure_rate_threshold' => 50,
             'recovery_timeout' => 60,
             'half_open_trials' => 2,
         ],
@@ -108,7 +112,9 @@ Override persistido (aparece no dashboard; a próxima `run()` sem esses métodos
 
 ```php
 Resilience::circuitBreaker('payment-gateway')
-    ->failureThreshold(1)
+    ->slidingWindowSize(20)
+    ->minimumCalls(10)
+    ->failureRateThreshold(50)
     ->recoveryTimeout(15)
     ->run(...);
 ```
@@ -123,7 +129,7 @@ use LaravelResilienceKit\Facades\Resilience;
 
 class PaymentService
 {
-    #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', failureThreshold: 3, recoveryTimeout: 60)]
+    #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', slidingWindowSize: 20, minimumCalls: 10, failureRateThreshold: 50, recoveryTimeout: 60)]
     public function processPayment(array $payload)
     {
         // Chamada a serviço externo
@@ -143,7 +149,7 @@ $payments->processPayment($payload);   // protegido pelo circuito "payment-gatew
 Resilience::call($service, 'processPayment', [$payload]);
 ```
 
-Parâmetros do atributo (todos opcionais): `name` (padrão `Classe::método`), `fallback` (método da classe ou classe de `FallbackHandlerInterface`), `failureThreshold`, `recoveryTimeout` e `halfOpenTrials` (quando omitidos, usam `circuits.{name}` ou os defaults de `circuit_breaker`).
+Parâmetros do atributo (todos opcionais): `name` (padrão `Classe::método`), `fallback` (método da classe ou classe de `FallbackHandlerInterface`), `slidingWindowSize`, `minimumCalls`, `failureRateThreshold`, `recoveryTimeout` e `halfOpenTrials` (quando omitidos, usam `circuits.{name}` ou os defaults de `circuit_breaker`).
 
 > ⚠️ Atributos PHP são apenas metadados: a proteção só é aplicada nas chamadas feitas **através do proxy** (`protect`) ou de `Resilience::call()`. O proxy **não** é uma instância da classe original (não satisfaz type hints); use `$payments->__unwrap()` para obter o objeto real. Chamadas diretas ao objeto original não são protegidas.
 
@@ -168,7 +174,7 @@ Executar a suíte completa de testes unitários e de integração:
 Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota definida em seu `.env`).
 
 - **Visão Geral de Circuitos:** Acompanhe o estado atual de cada circuito registrado (`CLOSED`, `OPEN`, `HALF-OPEN`), com atualização automática a cada 5 segundos.
-- **Métricas:** Contador de falhas (vs. limite), `recovery_timeout`, horário da última abertura, motivo da última falha e tempo restante até a tentativa de recuperação.
+- **Métricas:** Amostra da janela (falhas/chamadas e taxa), política (`failure_rate_threshold`, volume mínimo, tamanho da janela), provas de HALF-OPEN, `recovery_timeout`, horário da última abertura, motivo da última falha e tempo restante até a tentativa de recuperação.
 - **Ações Imediatas:** Botão de **Reset** para fechar um circuito aberto e botão de **Remove** (com confirmação) para tirá-lo do painel e apagar o estado persistido.
 
 ### API JSON
@@ -180,7 +186,7 @@ Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota defi
 | `POST` | `/resilience/api/circuits/{name}/reset` | Reset manual (`404` se o circuito não existir) |
 | `DELETE` | `/resilience/api/circuits/{name}` | Remove o circuito do painel (`404` se não existir). A próxima chamada pode registrá-lo de novo |
 
-> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem o último `failureThreshold()` / `recoveryTimeout()` / `halfOpenTrials()` persistido e, para o que não foi definido, `circuits.{name}` ou os defaults de `circuit_breaker`. Uma `run()` que omite o método faz o painel voltar ao config.
+> A amostra é a janela das últimas chamadas. O circuito abre quando ela tem o volume mínimo e a taxa de falha atinge o limite. Os limites exibidos (`sliding_window_size`, `minimum_calls`, `failure_rate_threshold`, `recovery_timeout`, `half_open_trials`) seguem o último valor fluente persistido e, para o que não foi definido, `circuits.{name}` ou os defaults de `circuit_breaker`. Uma `run()` que omite o método faz o painel voltar ao config.
 
 ### Autenticação e autorização
 

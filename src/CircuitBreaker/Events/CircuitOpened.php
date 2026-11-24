@@ -15,13 +15,17 @@ final readonly class CircuitOpened
     /**
      * @param  string  $circuit  Nome do circuito.
      * @param  CircuitState  $previousState  Estado anterior (CLOSED ou HALF_OPEN).
-     * @param  int  $failures  Contador de falhas no momento da abertura.
+     * @param  int  $failures  Falhas dentro da janela no momento da abertura.
+     * @param  int  $calls  Chamadas dentro da janela no momento da abertura.
+     * @param  int  $failureRate  Taxa de falha da janela, em porcentagem inteira.
      * @param  string|null  $reason  Mensagem da última falha registrada.
      */
     public function __construct(
         public string $circuit,
         public CircuitState $previousState,
         public int $failures,
+        public int $calls,
+        public int $failureRate,
         public ?string $reason = null,
     ) {}
 }

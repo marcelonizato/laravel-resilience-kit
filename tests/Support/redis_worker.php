@@ -12,7 +12,7 @@ declare(strict_types=1);
  *
  * Modos:
  *  - cas  : tenta CLOSED -> OPEN uma vez e imprime `1` (venceu) ou `0`.
- *  - incr : incrementa falhas N vezes e imprime os valores retornados (CSV).
+ *  - incr : grava N falhas na janela (tamanho 1000) e imprime o total de chamadas (CSV).
  */
 
 use LaravelResilienceKit\CircuitBreaker\Drivers\RedisCircuitStore;
@@ -39,7 +39,7 @@ if ($mode === 'cas') {
 $values = [];
 
 for ($i = 0; $i < $iterations; $i++) {
-    $values[] = $store->incrementFailures($circuit, 'worker');
+    $values[] = $store->recordOutcome($circuit, true, 1000, 'worker')->calls;
 }
 
 echo implode(',', $values);

@@ -21,7 +21,7 @@ class PaymentService
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
-    #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', failureThreshold: 2, recoveryTimeout: 30)]
+    #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', slidingWindowSize: 2, minimumCalls: 2, failureRateThreshold: 100, recoveryTimeout: 30)]
     public function processPayment(array $payload): array
     {
         $this->calls++;
@@ -82,13 +82,13 @@ class PaymentService
         return 'private:'.$e->getMessage();
     }
 
-    #[WithCircuitBreaker(name: 'no-fallback', failureThreshold: 1)]
+    #[WithCircuitBreaker(name: 'no-fallback', slidingWindowSize: 1, minimumCalls: 1, failureRateThreshold: 100)]
     public function withoutFallback(): never
     {
         throw new RuntimeException('no fallback failure');
     }
 
-    #[WithCircuitBreaker(name: 'single-trial', fallback: 'singleTrialFallback', failureThreshold: 1, recoveryTimeout: 5, halfOpenTrials: 1)]
+    #[WithCircuitBreaker(name: 'single-trial', fallback: 'singleTrialFallback', slidingWindowSize: 1, minimumCalls: 1, failureRateThreshold: 100, recoveryTimeout: 5, halfOpenTrials: 1)]
     public function singleTrial(bool $fail): string
     {
         if ($fail) {

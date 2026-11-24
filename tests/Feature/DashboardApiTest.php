@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Gate;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
 use LaravelResilienceKit\CircuitBreaker\Events\CircuitClosed;
 use LaravelResilienceKit\CircuitBreaker\Events\CircuitHalfOpened;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 use LaravelResilienceKit\Facades\Resilience;
 
 beforeEach(function (): void {
@@ -28,7 +29,7 @@ it('can fetch circuit status list via dashboard api', function (): void {
         ->assertStatus(200)
         ->assertJsonStructure([
             'circuits' => [
-                '*' => ['name', 'state', 'failures_count', 'failure_threshold', 'recovery_timeout'],
+                '*' => ['name', 'state', 'calls_count', 'failures_count', 'failure_rate', 'sliding_window_size', 'minimum_calls', 'failure_rate_threshold', 'recovery_timeout'],
             ],
         ]);
 });
@@ -44,7 +45,7 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
 
     Resilience::circuitBreaker('zeta-service')->getState();
 
-    $broken = Resilience::circuitBreaker('alpha-service')->failureThreshold(1);
+    $broken = openAfterConsecutiveFailures(Resilience::circuitBreaker('alpha-service'), 1);
     attempt($broken, failingAction('database down'));
 
     $this->travel(15)->seconds();
@@ -55,8 +56,12 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->assertJsonPath('circuits.0.name', 'alpha-service')
         ->assertJsonPath('circuits.0.state', 'open')
         ->assertJsonPath('circuits.0.state_label', 'OPEN')
+        ->assertJsonPath('circuits.0.calls_count', 1)
         ->assertJsonPath('circuits.0.failures_count', 1)
-        ->assertJsonPath('circuits.0.failure_threshold', 1)
+        ->assertJsonPath('circuits.0.failure_rate', 100)
+        ->assertJsonPath('circuits.0.sliding_window_size', 1)
+        ->assertJsonPath('circuits.0.minimum_calls', 1)
+        ->assertJsonPath('circuits.0.failure_rate_threshold', 100)
         ->assertJsonPath('circuits.0.recovery_timeout', 60)
         ->assertJsonPath('circuits.0.half_open_trials', 3)
         ->assertJsonPath('circuits.0.last_failure_reason', 'database down')
@@ -64,7 +69,9 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->assertJsonPath('circuits.1.name', 'zeta-service')
         ->assertJsonPath('circuits.1.state', 'closed')
         ->assertJsonPath('circuits.1.state_label', 'CLOSED')
+        ->assertJsonPath('circuits.1.calls_count', 0)
         ->assertJsonPath('circuits.1.failures_count', 0)
+        ->assertJsonPath('circuits.1.failure_rate', 0)
         ->assertJsonPath('circuits.1.last_tripped_at', null)
         ->assertJsonPath('circuits.1.last_failure_reason', null)
         ->assertJsonPath('circuits.1.retry_after', null);
@@ -76,30 +83,41 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
 });
 
 it('shows fluent limits on the dashboard', function (): void {
-    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.sliding_window_size', 10);
+    config()->set('resilience-kit.circuit_breaker.minimum_calls', 10);
+    config()->set('resilience-kit.circuit_breaker.failure_rate_threshold', 50);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
 
     Resilience::circuitBreaker('payment-service')
-        ->failureThreshold(3)
+        ->slidingWindowSize(20)
+        ->minimumCalls(8)
+        ->failureRateThreshold(40)
         ->recoveryTimeout(60)
         ->halfOpenTrials(2);
 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
         ->assertJsonPath('circuits.0.name', 'payment-service')
-        ->assertJsonPath('circuits.0.failure_threshold', 3)
+        ->assertJsonPath('circuits.0.sliding_window_size', 20)
+        ->assertJsonPath('circuits.0.minimum_calls', 8)
+        ->assertJsonPath('circuits.0.effective_minimum_calls', 8)
+        ->assertJsonPath('circuits.0.failure_rate_threshold', 40)
         ->assertJsonPath('circuits.0.recovery_timeout', 60)
         ->assertJsonPath('circuits.0.half_open_trials', 2);
 });
 
 it('shows the config again after a later call omits the fluent limits', function (): void {
-    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.sliding_window_size', 10);
+    config()->set('resilience-kit.circuit_breaker.minimum_calls', 10);
+    config()->set('resilience-kit.circuit_breaker.failure_rate_threshold', 50);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
 
     Resilience::circuitBreaker('payment-service')
-        ->failureThreshold(3)
+        ->slidingWindowSize(20)
+        ->minimumCalls(8)
+        ->failureRateThreshold(40)
         ->recoveryTimeout(60)
         ->halfOpenTrials(2);
 
@@ -107,16 +125,20 @@ it('shows the config again after a later call omits the fluent limits', function
 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
-        ->assertJsonPath('circuits.0.failure_threshold', 5)
+        ->assertJsonPath('circuits.0.sliding_window_size', 10)
+        ->assertJsonPath('circuits.0.minimum_calls', 10)
+        ->assertJsonPath('circuits.0.failure_rate_threshold', 50)
         ->assertJsonPath('circuits.0.recovery_timeout', 30)
         ->assertJsonPath('circuits.0.half_open_trials', 3);
 });
 
 it('shows named circuit limits from the configuration without a fluent override', function (): void {
-    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.sliding_window_size', 10);
+    config()->set('resilience-kit.circuit_breaker.failure_rate_threshold', 50);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuits.payment-service', [
-        'failure_threshold' => 3,
+        'sliding_window_size' => 20,
+        'failure_rate_threshold' => 40,
         'recovery_timeout' => 60,
     ]);
 
@@ -125,21 +147,26 @@ it('shows named circuit limits from the configuration without a fluent override'
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
         ->assertJsonPath('circuits.0.name', 'payment-service')
-        ->assertJsonPath('circuits.0.failure_threshold', 3)
+        ->assertJsonPath('circuits.0.sliding_window_size', 20)
+        ->assertJsonPath('circuits.0.failure_rate_threshold', 40)
+        ->assertJsonPath('circuits.0.minimum_calls', 10)
         ->assertJsonPath('circuits.0.recovery_timeout', 60)
         ->assertJsonPath('circuits.0.half_open_trials', 3);
 });
 
 it('keeps fluent limits on the dashboard after a reset', function (): void {
     Resilience::circuitBreaker('payment-service')
-        ->failureThreshold(3)
+        ->slidingWindowSize(20)
+        ->failureRateThreshold(40)
         ->recoveryTimeout(60);
 
     $this->postJson('/resilience/api/circuits/payment-service/reset')->assertOk();
 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
-        ->assertJsonPath('circuits.0.failure_threshold', 3)
+        ->assertJsonPath('circuits.0.sliding_window_size', 20)
+        ->assertJsonPath('circuits.0.failure_rate_threshold', 40)
+        ->assertJsonPath('circuits.0.calls_count', 0)
         ->assertJsonPath('circuits.0.recovery_timeout', 60);
 });
 
@@ -177,7 +204,7 @@ it('shows HALF-OPEN on the dashboard after the recovery timeout elapses', functi
 */
 
 it('can manually reset a circuit via dashboard api', function (): void {
-    $cb = Resilience::circuitBreaker('order-service')->failureThreshold(1);
+    $cb = openAfterConsecutiveFailures(Resilience::circuitBreaker('order-service'), 1);
 
     try {
         $cb->run(fn () => throw new Exception('Error'));
@@ -248,7 +275,7 @@ it('resets circuits whose names contain special characters', function (string $n
 it('removes a circuit from the index and deletes its stored state', function (): void {
     $cb = Resilience::circuitBreaker('order-service');
     $cb->trip();
-    Resilience::store()->setFailureThreshold('order-service', 9);
+    Resilience::store()->setSlidingWindowSize('order-service', 9);
 
     $this->deleteJson('/resilience/api/circuits/order-service')
         ->assertOk()
@@ -256,9 +283,9 @@ it('removes a circuit from the index and deletes its stored state', function ():
 
     expect(Resilience::store()->circuits())->toBe([])
         ->and(Resilience::store()->getState('order-service'))->toBe(CircuitState::CLOSED)
-        ->and(Resilience::store()->getFailures('order-service'))->toBe(0)
+        ->and(Resilience::store()->getWindow('order-service', 10))->toEqual(CallWindow::empty())
         ->and(Resilience::store()->getLastFailureReason('order-service'))->toBeNull()
-        ->and(Resilience::store()->getFailureThreshold('order-service'))->toBeNull();
+        ->and(Resilience::store()->getSlidingWindowSize('order-service'))->toBeNull();
 
     $this->getJson('/resilience/api/circuits')
         ->assertExactJson(['circuits' => []]);
@@ -325,6 +352,9 @@ it('renders the dashboard view with the api endpoints', function (): void {
         ->assertViewIs('resilience-kit::dashboard.index')
         ->assertViewHas('circuitsUrl', url('/resilience/api/circuits'))
         ->assertSee('Circuit Breakers')
+        ->assertSee('Sample', false)
+        ->assertSee('opens at', false)
+        ->assertSee('collecting', false)
         ->assertSee('Remove', false)
         ->assertSee('csrf-token', false)
         // Embutida no <script> via @json (com barras escapadas).

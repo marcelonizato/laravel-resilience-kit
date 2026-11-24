@@ -126,7 +126,9 @@ it('is declared as a method-only attribute with optional settings', function ():
     expect($attribute->flags)->toBe(Attribute::TARGET_METHOD)
         ->and($defaults->name)->toBeNull()
         ->and($defaults->fallback)->toBeNull()
-        ->and($defaults->failureThreshold)->toBeNull()
+        ->and($defaults->slidingWindowSize)->toBeNull()
+        ->and($defaults->minimumCalls)->toBeNull()
+        ->and($defaults->failureRateThreshold)->toBeNull()
         ->and($defaults->recoveryTimeout)->toBeNull()
         ->and($defaults->halfOpenTrials)->toBeNull();
 });

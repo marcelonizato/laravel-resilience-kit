@@ -20,7 +20,7 @@ use Attribute;
  * Os limites não informados usam os padrões de `config/resilience-kit.php`.
  *
  * ```php
- * #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', failureThreshold: 3)]
+ * #[WithCircuitBreaker(name: 'payment-gateway', fallback: 'paymentFallback', failureRateThreshold: 50, slidingWindowSize: 10)]
  * public function processPayment(array $payload): array { ... }
  *
  * public function paymentFallback(array $payload, \Throwable $e): array { ... }
@@ -32,14 +32,18 @@ final readonly class WithCircuitBreaker
     /**
      * @param  string|null  $name  Nome do circuito; padrão: `Classe::método`.
      * @param  string|null  $fallback  Método da classe ou classe de FallbackHandlerInterface.
-     * @param  int|null  $failureThreshold  Falhas para abrir o circuito.
+     * @param  int|null  $slidingWindowSize  Chamadas recentes que entram na amostra.
+     * @param  int|null  $minimumCalls  Chamadas exigidas antes de avaliar a taxa de falha.
+     * @param  int|null  $failureRateThreshold  Porcentagem de falhas (1–100) que abre o circuito.
      * @param  int|null  $recoveryTimeout  Segundos em OPEN antes do HALF-OPEN.
      * @param  int|null  $halfOpenTrials  Sucessos em HALF-OPEN para fechar o circuito.
      */
     public function __construct(
         public ?string $name = null,
         public ?string $fallback = null,
-        public ?int $failureThreshold = null,
+        public ?int $slidingWindowSize = null,
+        public ?int $minimumCalls = null,
+        public ?int $failureRateThreshold = null,
         public ?int $recoveryTimeout = null,
         public ?int $halfOpenTrials = null,
     ) {}

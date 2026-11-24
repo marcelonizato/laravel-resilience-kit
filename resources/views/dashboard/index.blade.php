@@ -46,7 +46,13 @@
         .badge.closed { color: var(--closed); background: var(--closed-bg); }
         .badge.open { color: var(--open); background: var(--open-bg); }
         .badge.half_open { color: var(--half); background: var(--half-bg); }
-        .reason { max-width: 320px; word-break: break-word; }
+        .reason { max-width: 280px; word-break: break-word; }
+        .sample { min-width: 160px; }
+        .meter { position: relative; height: 8px; margin: 6px 0 2px; border-radius: 999px; background: var(--border); overflow: hidden; }
+        .meter-fill { height: 100%; width: 0; background: var(--primary); border-radius: 999px; }
+        .meter-fill.hot { background: var(--open); }
+        .meter-mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); opacity: .55; }
+        .policy { white-space: nowrap; }
         .actions { white-space: nowrap; }
         .actions button + button { margin-left: 8px; }
         .empty, .error { padding: 28px; text-align: center; }
@@ -84,8 +90,8 @@
             <tr>
                 <th>Circuit</th>
                 <th>State</th>
-                <th>Failures</th>
-                <th>Recovery timeout</th>
+                <th>Sample</th>
+                <th>Policy</th>
                 <th>Last tripped</th>
                 <th>Last failure</th>
                 <th></th>
@@ -97,7 +103,7 @@
     </div>
 
     <footer class="muted">
-        Thresholds and timeouts follow the last <code>failureThreshold()</code> / <code>recoveryTimeout()</code> call, then <code>circuits.{name}</code>, then the global defaults. A later call that omits them returns to the config.
+        The sample is the last N calls. The circuit opens when that window holds at least the minimum number of calls and the failure rate reaches the threshold. A success stays in the sample; it does not clear the failures still inside the window. Limits follow the last fluent call, then <code>circuits.{name}</code>, then the global defaults. A later call that omits them returns to the config. The mark on the bar is the failure-rate threshold.
     </footer>
 </div>
 
@@ -149,6 +155,40 @@
             });
         }
 
+        function sampleCell(circuit) {
+            var minimum = circuit.effective_minimum_calls;
+            var rate = circuit.failure_rate;
+            var hot = circuit.calls_count >= minimum && rate >= circuit.failure_rate_threshold;
+            var td = el('td', 'sample');
+
+            td.appendChild(el('div', null, circuit.failures_count + '/' + circuit.calls_count + ' failed'));
+
+            var track = el('div', 'meter');
+            var fill = el('div', 'meter-fill' + (hot ? ' hot' : ''));
+            fill.style.width = Math.max(0, Math.min(100, rate)) + '%';
+            track.appendChild(fill);
+            var mark = el('div', 'meter-mark');
+            mark.style.left = Math.max(0, Math.min(100, circuit.failure_rate_threshold)) + '%';
+            track.appendChild(mark);
+            td.appendChild(track);
+
+            var caption = circuit.calls_count < minimum
+                ? 'collecting ' + circuit.calls_count + '/' + minimum
+                : rate + '% of the last ' + circuit.sliding_window_size;
+            td.appendChild(el('div', 'muted', caption));
+
+            return td;
+        }
+
+        function policyCell(circuit) {
+            var td = el('td', 'policy');
+            td.appendChild(el('div', null, 'opens at ' + circuit.failure_rate_threshold + '%'));
+            td.appendChild(el('div', 'muted', 'min ' + circuit.minimum_calls + ' · window ' + circuit.sliding_window_size));
+            td.appendChild(el('div', 'muted', 'retry ' + circuit.recovery_timeout + 's · trials ' + circuit.half_open_trials));
+
+            return td;
+        }
+
         function formatDate(iso) {
             return iso ? new Date(iso).toLocaleString() : '—';
         }
@@ -169,10 +209,13 @@
                 if (circuit.state === 'open' && circuit.retry_after !== null) {
                     state.appendChild(el('div', 'muted', 'retry in ' + circuit.retry_after + 's'));
                 }
+                if (circuit.state === 'half_open') {
+                    state.appendChild(el('div', 'muted', 'trials ' + circuit.half_open_successes + '/' + circuit.half_open_trials));
+                }
                 tr.appendChild(state);
 
-                tr.appendChild(el('td', null, circuit.failures_count + ' / ' + circuit.failure_threshold));
-                tr.appendChild(el('td', null, circuit.recovery_timeout + 's'));
+                tr.appendChild(sampleCell(circuit));
+                tr.appendChild(policyCell(circuit));
                 tr.appendChild(el('td', null, formatDate(circuit.last_tripped_at)));
                 tr.appendChild(el('td', 'reason muted', circuit.last_failure_reason || '—'));
 

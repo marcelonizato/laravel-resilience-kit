@@ -26,16 +26,21 @@ return [
     | Circuit Breaker
     |--------------------------------------------------------------------------
     |
-    | failure_threshold : falhas acumuladas (desde o último fechamento/reset) para abrir o circuito (CLOSED -> OPEN).
-    | recovery_timeout  : segundos em OPEN antes de permitir HALF-OPEN.
-    | half_open_trials  : requisições de teste bem-sucedidas para fechar o circuito.
-    | cache_store       : store do Laravel usado pelo driver "cache".
-    | redis_connection  : conexão de config/database.php usada pelo driver "redis".
-    | prefix            : prefixo das chaves (`{prefix}{circuit}:state`, `:failures`, ...).
+    | sliding_window_size     : quantas chamadas recentes entram na amostra.
+    | minimum_calls           : chamadas exigidas na janela antes de avaliar a taxa.
+    |                           Acima do tamanho da janela, vale o tamanho da janela.
+    | failure_rate_threshold  : porcentagem de falhas (1–100) que abre o circuito.
+    | recovery_timeout        : segundos em OPEN antes de permitir HALF-OPEN.
+    | half_open_trials        : requisições de teste bem-sucedidas para fechar o circuito.
+    | cache_store             : store do Laravel usado pelo driver "cache".
+    | redis_connection        : conexão de config/database.php usada pelo driver "redis".
+    | prefix                  : prefixo das chaves (`{prefix}{circuit}:state`, `:window`, ...).
     |
     */
     'circuit_breaker' => [
-        'failure_threshold' => (int) env('RESILIENCE_CB_FAILURE_THRESHOLD', 5),
+        'sliding_window_size' => (int) env('RESILIENCE_CB_SLIDING_WINDOW_SIZE', 10),
+        'minimum_calls' => (int) env('RESILIENCE_CB_MINIMUM_CALLS', 10),
+        'failure_rate_threshold' => (int) env('RESILIENCE_CB_FAILURE_RATE_THRESHOLD', 50),
         'recovery_timeout' => (int) env('RESILIENCE_CB_RECOVERY_TIMEOUT', 30),
         'half_open_trials' => (int) env('RESILIENCE_CB_HALF_OPEN_TRIALS', 3),
         'cache_store' => env('RESILIENCE_CB_CACHE_STORE', 'redis'),
@@ -62,7 +67,9 @@ return [
     */
     'circuits' => [
         // 'payment-gateway' => [
-        //     'failure_threshold' => 3,
+        //     'sliding_window_size' => 20,
+        //     'minimum_calls' => 10,
+        //     'failure_rate_threshold' => 50,
         //     'recovery_timeout' => 60,
         //     'half_open_trials' => 2,
         // ],

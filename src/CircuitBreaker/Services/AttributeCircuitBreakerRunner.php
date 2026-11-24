@@ -43,8 +43,16 @@ class AttributeCircuitBreakerRunner
 
         $circuit = $this->manager->circuitBreaker($attribute->name ?? $target::class.'::'.$method);
 
-        if ($attribute->failureThreshold !== null) {
-            $circuit->failureThreshold($attribute->failureThreshold);
+        if ($attribute->slidingWindowSize !== null) {
+            $circuit->slidingWindowSize($attribute->slidingWindowSize);
+        }
+
+        if ($attribute->minimumCalls !== null) {
+            $circuit->minimumCalls($attribute->minimumCalls);
+        }
+
+        if ($attribute->failureRateThreshold !== null) {
+            $circuit->failureRateThreshold($attribute->failureRateThreshold);
         }
 
         if ($attribute->recoveryTimeout !== null) {

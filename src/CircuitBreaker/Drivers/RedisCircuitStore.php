@@ -9,14 +9,15 @@ use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Carbon;
 use LaravelResilienceKit\CircuitBreaker\Contracts\CircuitStoreInterface;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 use LaravelResilienceKit\CircuitBreaker\Support\CircuitKeys;
 
 /**
  * Driver Redis com atomicidade garantida.
  *
  * Operações simples usam comandos atômicos nativos (`INCR`, `DEL`, `SADD`).
- * Operações compostas (compare-and-set de estado + efeitos colaterais, e
- * incremento de falhas + motivo) são executadas como scripts Lua, que o Redis
+ * Operações compostas (compare-and-set de estado + efeitos colaterais, e a
+ * gravação da janela deslizante) são executadas como scripts Lua, que o Redis
  * processa de forma indivisível, eliminando race conditions entre processos e
  * servidores.
  *
@@ -28,10 +29,11 @@ final readonly class RedisCircuitStore implements CircuitStoreInterface
     /**
      * Compare-and-set de estado com efeitos colaterais.
      *
-     * KEYS: [1] state, [2] failures, [3] half_open_successes, [4] last_tripped_at
+     * KEYS: [1] state, [2] window, [3] half_open_successes, [4] last_tripped_at
      * ARGV: [1] estado esperado, [2] novo estado, [3] timestamp atual, [4] forçar ('1'|'0')
      *
      * Retorna 1 se a transição foi efetuada, 0 caso contrário.
+     * OPEN preserva a janela. CLOSED apaga a janela.
      */
     private const string TRANSITION_SCRIPT = <<<'LUA'
 local current = redis.call('GET', KEYS[1])
@@ -58,21 +60,58 @@ return 1
 LUA;
 
     /**
-     * Incrementa o contador de falhas e registra o motivo (se houver).
+     * Empilha um resultado na janela e devolve {chamadas, falhas}.
      *
-     * KEYS: [1] failures, [2] last_failure_reason
-     * ARGV: [1] motivo ('' = não registrar)
-     *
-     * Retorna o novo valor do contador.
+     * KEYS: [1] window, [2] last_failure_reason
+     * ARGV: [1] resultado ('1' falha, '0' sucesso), [2] tamanho da janela, [3] motivo ('' = não registrar)
      */
-    private const string INCREMENT_FAILURES_SCRIPT = <<<'LUA'
-local failures = redis.call('INCR', KEYS[1])
-
-if ARGV[1] ~= '' then
-    redis.call('SET', KEYS[2], ARGV[1])
+    private const string RECORD_OUTCOME_SCRIPT = <<<'LUA'
+local size = tonumber(ARGV[2])
+if not size or size < 1 then
+    size = 1
 end
 
-return failures
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, size - 1)
+
+if ARGV[1] == '1' and ARGV[3] ~= '' then
+    redis.call('SET', KEYS[2], ARGV[3])
+end
+
+local items = redis.call('LRANGE', KEYS[1], 0, -1)
+local failures = 0
+for i = 1, #items do
+    if items[i] == '1' then
+        failures = failures + 1
+    end
+end
+
+return {#items, failures}
+LUA;
+
+    /**
+     * Apara a janela ao tamanho configurado e devolve {chamadas, falhas}.
+     *
+     * KEYS: [1] window
+     * ARGV: [1] tamanho da janela
+     */
+    private const string READ_WINDOW_SCRIPT = <<<'LUA'
+local size = tonumber(ARGV[1])
+if not size or size < 1 then
+    size = 1
+end
+
+redis.call('LTRIM', KEYS[1], 0, size - 1)
+
+local items = redis.call('LRANGE', KEYS[1], 0, -1)
+local failures = 0
+for i = 1, #items do
+    if items[i] == '1' then
+        failures = failures + 1
+    end
+end
+
+return {#items, failures}
 LUA;
 
     private CircuitKeys $keys;
@@ -140,25 +179,45 @@ LUA;
     /**
      * {@inheritDoc}
      */
-    public function incrementFailures(string $circuit, ?string $reason = null): int
+    public function recordOutcome(string $circuit, bool $failure, int $windowSize, ?string $reason = null): CallWindow
     {
         $this->register($circuit);
 
         $result = $this->evaluate(
-            self::INCREMENT_FAILURES_SCRIPT,
-            [$this->keys->failures($circuit), $this->keys->lastFailureReason($circuit)],
-            [$reason ?? ''],
+            self::RECORD_OUTCOME_SCRIPT,
+            [$this->keys->window($circuit), $this->keys->lastFailureReason($circuit)],
+            [$failure ? '1' : '0', (string) max(1, $windowSize), $failure ? ($reason ?? '') : ''],
         );
 
-        return is_numeric($result) ? (int) $result : 0;
+        return $this->windowFromResult($result);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailures(string $circuit): int
+    public function getWindow(string $circuit, int $windowSize): CallWindow
     {
-        return $this->readInt($this->keys->failures($circuit));
+        $result = $this->evaluate(
+            self::READ_WINDOW_SCRIPT,
+            [$this->keys->window($circuit)],
+            [(string) max(1, $windowSize)],
+        );
+
+        return $this->windowFromResult($result);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function rememberFailureReason(string $circuit, string $reason): void
+    {
+        $this->register($circuit);
+
+        if ($reason === '') {
+            return;
+        }
+
+        $this->connection->command('set', [$this->keys->lastFailureReason($circuit), $reason]);
     }
 
     /**
@@ -225,25 +284,73 @@ LUA;
     /**
      * {@inheritDoc}
      */
-    public function setFailureThreshold(string $circuit, int $threshold): void
+    public function setSlidingWindowSize(string $circuit, int $size): void
     {
-        $this->writeConfig($circuit, $this->keys->failureThreshold($circuit), $threshold);
+        $this->writeConfig($circuit, $this->keys->slidingWindowSize($circuit), $size);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailureThreshold(string $circuit): ?int
+    public function getSlidingWindowSize(string $circuit): ?int
     {
-        return $this->readOptionalInt($this->keys->failureThreshold($circuit));
+        return $this->readOptionalInt($this->keys->slidingWindowSize($circuit));
     }
 
     /**
      * {@inheritDoc}
      */
-    public function forgetFailureThreshold(string $circuit): void
+    public function forgetSlidingWindowSize(string $circuit): void
     {
-        $this->connection->command('del', [$this->keys->failureThreshold($circuit)]);
+        $this->connection->command('del', [$this->keys->slidingWindowSize($circuit)]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setMinimumCalls(string $circuit, int $calls): void
+    {
+        $this->writeConfig($circuit, $this->keys->minimumCalls($circuit), $calls);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getMinimumCalls(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->minimumCalls($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetMinimumCalls(string $circuit): void
+    {
+        $this->connection->command('del', [$this->keys->minimumCalls($circuit)]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setFailureRateThreshold(string $circuit, int $percentage): void
+    {
+        $this->writeConfig($circuit, $this->keys->failureRateThreshold($circuit), $percentage);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getFailureRateThreshold(string $circuit): ?int
+    {
+        return $this->readOptionalInt($this->keys->failureRateThreshold($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetFailureRateThreshold(string $circuit): void
+    {
+        $this->connection->command('del', [$this->keys->failureRateThreshold($circuit)]);
     }
 
     /**
@@ -314,7 +421,7 @@ LUA;
             self::TRANSITION_SCRIPT,
             [
                 $this->keys->state($circuit),
-                $this->keys->failures($circuit),
+                $this->keys->window($circuit),
                 $this->keys->halfOpenSuccesses($circuit),
                 $this->keys->lastTrippedAt($circuit),
             ],
@@ -348,6 +455,20 @@ LUA;
         }
 
         return $this->connection->command('eval', [$script, count($keys), ...$keys, ...$arguments]);
+    }
+
+    /**
+     * Converte o retorno `{chamadas, falhas}` do Lua em uma janela.
+     *
+     * Um retorno inesperado (conexão vazia, script antigo) vira janela vazia.
+     */
+    private function windowFromResult(mixed $result): CallWindow
+    {
+        if (! is_array($result) || ! isset($result[0], $result[1]) || ! is_numeric($result[0]) || ! is_numeric($result[1])) {
+            return CallWindow::empty();
+        }
+
+        return new CallWindow(max(0, (int) $result[0]), max(0, (int) $result[1]));
     }
 
     /**

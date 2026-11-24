@@ -12,15 +12,16 @@ use LaravelResilienceKit\CircuitBreaker\Events\CircuitHalfOpened;
 use LaravelResilienceKit\CircuitBreaker\Events\CircuitOpened;
 use LaravelResilienceKit\CircuitBreaker\Exceptions\CircuitBreakerOpenException;
 use LaravelResilienceKit\CircuitBreaker\Services\CircuitBreakerService;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 use LaravelResilienceKit\Facades\Resilience;
 
 beforeEach(function (): void {
     Event::fake([CircuitOpened::class, CircuitClosed::class, CircuitHalfOpened::class]);
 
-    $this->circuit = Resilience::circuitBreaker('test-service')
-        ->failureThreshold(2)
-        ->recoveryTimeout(10)
-        ->halfOpenTrials(2);
+    $this->circuit = openAfterConsecutiveFailures(
+        Resilience::circuitBreaker('test-service')->recoveryTimeout(10)->halfOpenTrials(2),
+        2,
+    );
 });
 
 /*
@@ -58,6 +59,140 @@ it('records the exception class when the message is empty', function (): void {
     expect($this->circuit->getLastFailureReason())->toBe(LogicException::class);
 });
 
+it('keeps earlier failures in the window when a later call succeeds', function (): void {
+    $circuit = Resilience::circuitBreaker('sampled')
+        ->slidingWindowSize(10)
+        ->minimumCalls(10)
+        ->failureRateThreshold(50);
+
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED)
+        ->and($circuit->getWindow()->calls)->toBe(5)
+        ->and($circuit->getWindow()->failures)->toBe(4)
+        ->and($circuit->getWindow()->failureRate())->toBe(80);
+});
+
+it('does not open before the minimum number of calls', function (): void {
+    $circuit = Resilience::circuitBreaker('warmup')
+        ->slidingWindowSize(10)
+        ->minimumCalls(10)
+        ->failureRateThreshold(50);
+
+    foreach (range(1, 9) as $ignored) {
+        attempt($circuit, failingAction());
+    }
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED)
+        ->and($circuit->getWindow()->calls)->toBe(9)
+        ->and($circuit->getWindow()->failures)->toBe(9);
+});
+
+it('opens when the failure rate in the window reaches the threshold', function (): void {
+    $circuit = Resilience::circuitBreaker('rated')
+        ->slidingWindowSize(10)
+        ->minimumCalls(10)
+        ->failureRateThreshold(50);
+
+    foreach (range(1, 5) as $ignored) {
+        attempt($circuit, failingAction());
+        $circuit->run(fn () => 'ok');
+    }
+
+    expect($circuit->getState())->toBe(CircuitState::OPEN)
+        ->and($circuit->getWindow()->calls)->toBe(10)
+        ->and($circuit->getWindow()->failures)->toBe(5)
+        ->and($circuit->getWindow()->failureRate())->toBe(50);
+
+    Event::assertDispatched(
+        CircuitOpened::class,
+        fn (CircuitOpened $event): bool => $event->circuit === 'rated'
+            && $event->calls === 10
+            && $event->failures === 5
+            && $event->failureRate === 50,
+    );
+});
+
+it('opens on the success that completes the minimum sample at the threshold', function (): void {
+    $circuit = Resilience::circuitBreaker('complete-sample')
+        ->slidingWindowSize(4)
+        ->minimumCalls(4)
+        ->failureRateThreshold(50);
+
+    attempt($circuit, failingAction('down'));
+    $circuit->run(fn () => 'ok');
+    attempt($circuit, failingAction('down'));
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED);
+
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::OPEN)
+        ->and($circuit->getWindow()->calls)->toBe(4)
+        ->and($circuit->getWindow()->failures)->toBe(2);
+});
+
+it('opens on intermittent failures that consecutive counting would miss', function (): void {
+    $circuit = Resilience::circuitBreaker('intermittent')
+        ->slidingWindowSize(5)
+        ->minimumCalls(5)
+        ->failureRateThreshold(50);
+
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED);
+
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::OPEN)
+        ->and($circuit->getWindow()->failureRate())->toBe(80);
+});
+
+it('drops failures once they age out of the sliding window', function (): void {
+    $circuit = Resilience::circuitBreaker('aging')
+        ->slidingWindowSize(4)
+        ->minimumCalls(4)
+        ->failureRateThreshold(80);
+
+    attempt($circuit, failingAction());
+    $circuit->run(fn () => 'ok');
+    $circuit->run(fn () => 'ok');
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED)
+        ->and($circuit->getWindow()->failures)->toBe(1);
+
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::CLOSED)
+        ->and($circuit->getWindow()->calls)->toBe(4)
+        ->and($circuit->getWindow()->failures)->toBe(0);
+});
+
+it('caps the minimum number of calls at the sliding window size', function (): void {
+    $circuit = Resilience::circuitBreaker('capped')
+        ->slidingWindowSize(4)
+        ->minimumCalls(100)
+        ->failureRateThreshold(50);
+
+    expect($circuit->getMinimumCalls())->toBe(100)
+        ->and($circuit->getEffectiveMinimumCalls())->toBe(4);
+
+    attempt($circuit, failingAction());
+    attempt($circuit, failingAction());
+    $circuit->run(fn () => 'ok');
+    $circuit->run(fn () => 'ok');
+
+    expect($circuit->getState())->toBe(CircuitState::OPEN);
+});
+
 /*
 |--------------------------------------------------------------------------
 | OPEN
@@ -79,6 +214,8 @@ it('trips to OPEN exactly when the failure threshold is reached and dispatches C
         fn (CircuitOpened $event): bool => $event->circuit === 'test-service'
             && $event->previousState === CircuitState::CLOSED
             && $event->failures === 2
+            && $event->calls === 2
+            && $event->failureRate === 100
             && $event->reason === 'second',
     );
 });
@@ -260,14 +397,19 @@ it('only counts the failure when another process already opened the circuit duri
 it('does not dispatch CircuitOpened when it loses the CLOSED -> OPEN race', function (): void {
     $store = Mockery::mock(CircuitStoreInterface::class)->shouldIgnoreMissing();
     $store->shouldReceive('getState')->with('racy')->andReturn(CircuitState::CLOSED);
-    $store->shouldReceive('incrementFailures')->once()->with('racy', 'boom')->andReturn(2);
+    $store->shouldReceive('recordOutcome')
+        ->once()
+        ->with('racy', true, 2, 'boom')
+        ->andReturn(new CallWindow(2, 2));
     $store->shouldReceive('transitionState')
         ->once()
         ->with('racy', CircuitState::CLOSED, CircuitState::OPEN)
         ->andReturnFalse();
 
-    $circuit = (new CircuitBreakerService('racy', $store, app(Dispatcher::class), Container::getInstance()))
-        ->failureThreshold(2);
+    $circuit = openAfterConsecutiveFailures(
+        new CircuitBreakerService('racy', $store, app(Dispatcher::class), Container::getInstance()),
+        2,
+    );
 
     attempt($circuit, failingAction('boom'));
 
@@ -368,7 +510,9 @@ it('does not dispatch CircuitClosed when resetting an already closed circuit', f
 
 it('exposes the configured limits', function (): void {
     expect($this->circuit->name())->toBe('test-service')
-        ->and($this->circuit->getFailureThreshold())->toBe(2)
+        ->and($this->circuit->getSlidingWindowSize())->toBe(2)
+        ->and($this->circuit->getMinimumCalls())->toBe(2)
+        ->and($this->circuit->getFailureRateThreshold())->toBe(100)
         ->and($this->circuit->getRecoveryTimeout())->toBe(10)
         ->and($this->circuit->getHalfOpenTrials())->toBe(2);
 });
@@ -376,7 +520,10 @@ it('exposes the configured limits', function (): void {
 it('rejects invalid limits', function (Closure $configure): void {
     $configure(Resilience::circuitBreaker('invalid'));
 })->throws(InvalidArgumentException::class)->with([
-    'threshold below 1' => [fn ($circuit) => $circuit->failureThreshold(0)],
+    'window below 1' => [fn ($circuit) => $circuit->slidingWindowSize(0)],
+    'minimum below 1' => [fn ($circuit) => $circuit->minimumCalls(0)],
+    'rate below 1' => [fn ($circuit) => $circuit->failureRateThreshold(0)],
+    'rate above 100' => [fn ($circuit) => $circuit->failureRateThreshold(101)],
     'negative timeout' => [fn ($circuit) => $circuit->recoveryTimeout(-1)],
     'trials below 1' => [fn ($circuit) => $circuit->halfOpenTrials(0)],
 ]);
@@ -392,7 +539,9 @@ it('shares state between instances of the same circuit name', function (): void 
 it('rehydrates the persisted limits on a new instance of the same circuit', function (): void {
     $again = Resilience::circuitBreaker('test-service');
 
-    expect($again->getFailureThreshold())->toBe(2)
+    expect($again->getSlidingWindowSize())->toBe(2)
+        ->and($again->getMinimumCalls())->toBe(2)
+        ->and($again->getFailureRateThreshold())->toBe(100)
         ->and($again->getRecoveryTimeout())->toBe(10)
         ->and($again->getHalfOpenTrials())->toBe(2);
 });
@@ -409,7 +558,9 @@ it('runs the complete CLOSED -> OPEN -> HALF-OPEN -> CLOSED lifecycle', function
         circuitStore($driver),
         app(Dispatcher::class),
         Container::getInstance(),
-    ))->failureThreshold(2)->recoveryTimeout(10)->halfOpenTrials(2);
+    ));
+
+    openAfterConsecutiveFailures($circuit, 2)->recoveryTimeout(10)->halfOpenTrials(2);
 
     attempt($circuit, failingAction());
     attempt($circuit, failingAction());

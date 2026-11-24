@@ -47,6 +47,20 @@ function circuitStore(string $driver): CircuitStoreInterface
 }
 
 /**
+ * Configura o circuito para abrir depois de `$failures` falhas consecutivas.
+ *
+ * Equivale a uma janela cheia só de falhas: tamanho e volume mínimo iguais a
+ * `$failures`, taxa de 100%. Um sucesso dentro da janela impede a abertura.
+ */
+function openAfterConsecutiveFailures(CircuitBreakerInterface $circuit, int $failures): CircuitBreakerInterface
+{
+    return $circuit
+        ->slidingWindowSize($failures)
+        ->minimumCalls($failures)
+        ->failureRateThreshold(100);
+}
+
+/**
  * Ação protegida que sempre falha com RuntimeException.
  *
  * @return Closure(): never

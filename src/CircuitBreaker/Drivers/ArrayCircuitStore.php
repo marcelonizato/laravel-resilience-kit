@@ -7,6 +7,7 @@ namespace LaravelResilienceKit\CircuitBreaker\Drivers;
 use Illuminate\Support\Carbon;
 use LaravelResilienceKit\CircuitBreaker\Contracts\CircuitStoreInterface;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 
 /**
  * Driver em memória, destinado a testes isolados.
@@ -20,8 +21,8 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /** @var array<string, CircuitState> */
     private array $states = [];
 
-    /** @var array<string, int> */
-    private array $failures = [];
+    /** @var array<string, list<int>> Resultados mais recentes primeiro (`1` falha, `0` sucesso). */
+    private array $windows = [];
 
     /** @var array<string, int> */
     private array $halfOpenSuccesses = [];
@@ -33,7 +34,13 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     private array $lastFailureReason = [];
 
     /** @var array<string, int> */
-    private array $failureThresholds = [];
+    private array $slidingWindowSizes = [];
+
+    /** @var array<string, int> */
+    private array $minimumCalls = [];
+
+    /** @var array<string, int> */
+    private array $failureRateThresholds = [];
 
     /** @var array<string, int> */
     private array $recoveryTimeouts = [];
@@ -103,23 +110,48 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
-    public function incrementFailures(string $circuit, ?string $reason = null): int
+    public function recordOutcome(string $circuit, bool $failure, int $windowSize, ?string $reason = null): CallWindow
     {
         $this->register($circuit);
 
-        if ($reason !== null && $reason !== '') {
+        if ($failure && $reason !== null && $reason !== '') {
             $this->lastFailureReason[$circuit] = $reason;
         }
 
-        return $this->failures[$circuit] = ($this->failures[$circuit] ?? 0) + 1;
+        $outcomes = $this->windows[$circuit] ?? [];
+        array_unshift($outcomes, $failure ? 1 : 0);
+        $outcomes = array_slice($outcomes, 0, $this->normalizeWindowSize($windowSize));
+        $this->windows[$circuit] = $outcomes;
+
+        return CallWindow::fromOutcomes($outcomes);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailures(string $circuit): int
+    public function getWindow(string $circuit, int $windowSize): CallWindow
     {
-        return $this->failures[$circuit] ?? 0;
+        $outcomes = array_slice($this->windows[$circuit] ?? [], 0, $this->normalizeWindowSize($windowSize));
+
+        if ($outcomes === []) {
+            unset($this->windows[$circuit]);
+        } else {
+            $this->windows[$circuit] = $outcomes;
+        }
+
+        return CallWindow::fromOutcomes($outcomes);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function rememberFailureReason(string $circuit, string $reason): void
+    {
+        $this->register($circuit);
+
+        if ($reason !== '') {
+            $this->lastFailureReason[$circuit] = $reason;
+        }
     }
 
     /**
@@ -163,7 +195,7 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     {
         unset(
             $this->states[$circuit],
-            $this->failures[$circuit],
+            $this->windows[$circuit],
             $this->halfOpenSuccesses[$circuit],
             $this->lastTrippedAt[$circuit],
             $this->lastFailureReason[$circuit],
@@ -178,11 +210,13 @@ final class ArrayCircuitStore implements CircuitStoreInterface
         unset(
             $this->registered[$circuit],
             $this->states[$circuit],
-            $this->failures[$circuit],
+            $this->windows[$circuit],
             $this->halfOpenSuccesses[$circuit],
             $this->lastTrippedAt[$circuit],
             $this->lastFailureReason[$circuit],
-            $this->failureThresholds[$circuit],
+            $this->slidingWindowSizes[$circuit],
+            $this->minimumCalls[$circuit],
+            $this->failureRateThresholds[$circuit],
             $this->recoveryTimeouts[$circuit],
             $this->halfOpenTrials[$circuit],
         );
@@ -191,26 +225,76 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
-    public function setFailureThreshold(string $circuit, int $threshold): void
+    public function setSlidingWindowSize(string $circuit, int $size): void
     {
         $this->register($circuit);
-        $this->failureThresholds[$circuit] = $threshold;
+        $this->slidingWindowSizes[$circuit] = $size;
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getFailureThreshold(string $circuit): ?int
+    public function getSlidingWindowSize(string $circuit): ?int
     {
-        return $this->failureThresholds[$circuit] ?? null;
+        return $this->slidingWindowSizes[$circuit] ?? null;
     }
 
     /**
      * {@inheritDoc}
      */
-    public function forgetFailureThreshold(string $circuit): void
+    public function forgetSlidingWindowSize(string $circuit): void
     {
-        unset($this->failureThresholds[$circuit]);
+        unset($this->slidingWindowSizes[$circuit]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setMinimumCalls(string $circuit, int $calls): void
+    {
+        $this->register($circuit);
+        $this->minimumCalls[$circuit] = $calls;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getMinimumCalls(string $circuit): ?int
+    {
+        return $this->minimumCalls[$circuit] ?? null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetMinimumCalls(string $circuit): void
+    {
+        unset($this->minimumCalls[$circuit]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setFailureRateThreshold(string $circuit, int $percentage): void
+    {
+        $this->register($circuit);
+        $this->failureRateThresholds[$circuit] = $percentage;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getFailureRateThreshold(string $circuit): ?int
+    {
+        return $this->failureRateThresholds[$circuit] ?? null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetFailureRateThreshold(string $circuit): void
+    {
+        unset($this->failureRateThresholds[$circuit]);
     }
 
     /**
@@ -277,6 +361,14 @@ final class ArrayCircuitStore implements CircuitStoreInterface
      */
     private function onClose(string $circuit): void
     {
-        unset($this->failures[$circuit], $this->halfOpenSuccesses[$circuit]);
+        unset($this->windows[$circuit], $this->halfOpenSuccesses[$circuit]);
+    }
+
+    /**
+     * Garante um tamanho de janela utilizável.
+     */
+    private function normalizeWindowSize(int $windowSize): int
+    {
+        return max(1, $windowSize);
     }
 }

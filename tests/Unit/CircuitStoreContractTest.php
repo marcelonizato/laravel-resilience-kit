@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
+use LaravelResilienceKit\CircuitBreaker\Support\CallWindow;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,7 +20,7 @@ it('starts a new circuit as CLOSED with zeroed counters', function (string $driv
     $store = circuitStore($driver);
 
     expect($store->getState('svc'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('svc'))->toBe(0)
+        ->and($store->getWindow('svc', 10))->toEqual(CallWindow::empty())
         ->and($store->getHalfOpenSuccesses('svc'))->toBe(0)
         ->and($store->getLastTrippedAt('svc'))->toBeNull()
         ->and($store->getLastFailureReason('svc'))->toBeNull()
@@ -36,14 +37,16 @@ it('registers circuits idempotently and lists them alphabetically', function (st
     expect($store->circuits())->toBe(['alpha', 'zeta']);
 })->with('stores');
 
-it('increments failures atomically and records the last reason', function (string $driver): void {
+it('records outcomes in a sliding window and keeps the latest failure reason', function (string $driver): void {
     $store = circuitStore($driver);
 
-    expect($store->incrementFailures('svc', 'first error'))->toBe(1)
-        ->and($store->incrementFailures('svc', 'second error'))->toBe(2)
-        ->and($store->incrementFailures('svc'))->toBe(3)
-        ->and($store->getFailures('svc'))->toBe(3)
-        ->and($store->getLastFailureReason('svc'))->toBe('second error')
+    expect($store->recordOutcome('svc', true, 3, 'first')->failures)->toBe(1)
+        ->and($store->recordOutcome('svc', false, 3)->calls)->toBe(2)
+        ->and($store->recordOutcome('svc', true, 3, 'second')->failures)->toBe(2)
+        ->and($store->recordOutcome('svc', true, 3, 'third'))->toEqual(new CallWindow(3, 2))
+        ->and($store->getWindow('svc', 3))->toEqual(new CallWindow(3, 2))
+        ->and($store->getWindow('svc', 2))->toEqual(new CallWindow(2, 2))
+        ->and($store->getLastFailureReason('svc'))->toBe('third')
         ->and($store->circuits())->toBe(['svc']);
 })->with('stores');
 
@@ -70,13 +73,13 @@ it('records last_tripped_at, keeps failures and clears half-open successes when 
     $store = circuitStore($driver);
     Carbon::setTestNow('2026-01-01 12:00:00');
 
-    $store->incrementFailures('svc', 'boom');
-    $store->incrementFailures('svc', 'boom');
+    $store->recordOutcome('svc', true, 10, 'boom');
+    $store->recordOutcome('svc', true, 10, 'boom');
     $store->incrementHalfOpenSuccesses('svc');
     $store->transitionState('svc', CircuitState::CLOSED, CircuitState::OPEN);
 
     expect($store->getLastTrippedAt('svc'))->toBe(Carbon::parse('2026-01-01 12:00:00')->getTimestamp())
-        ->and($store->getFailures('svc'))->toBe(2)
+        ->and($store->getWindow('svc', 10))->toEqual(new CallWindow(2, 2))
         ->and($store->getHalfOpenSuccesses('svc'))->toBe(0)
         ->and($store->getLastFailureReason('svc'))->toBe('boom');
 })->with('stores');
@@ -109,13 +112,13 @@ it('clears failures and half-open successes when closing but keeps last_tripped_
     $store = circuitStore($driver);
     Carbon::setTestNow('2026-01-01 12:00:00');
 
-    $store->incrementFailures('svc', 'boom');
+    $store->recordOutcome('svc', true, 10, 'boom');
     $store->forceState('svc', CircuitState::OPEN);
     $store->incrementHalfOpenSuccesses('svc');
     $store->transitionState('svc', CircuitState::OPEN, CircuitState::CLOSED);
 
     expect($store->getState('svc'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('svc'))->toBe(0)
+        ->and($store->getWindow('svc', 10))->toEqual(CallWindow::empty())
         ->and($store->getHalfOpenSuccesses('svc'))->toBe(0)
         ->and($store->getLastTrippedAt('svc'))->toBe(Carbon::parse('2026-01-01 12:00:00')->getTimestamp());
 })->with('stores');
@@ -134,14 +137,14 @@ it('forces state unconditionally', function (string $driver): void {
 it('resets state and counters but keeps the circuit registered', function (string $driver): void {
     $store = circuitStore($driver);
 
-    $store->incrementFailures('svc', 'boom');
+    $store->recordOutcome('svc', true, 10, 'boom');
     $store->incrementHalfOpenSuccesses('svc');
     $store->forceState('svc', CircuitState::OPEN);
 
     $store->reset('svc');
 
     expect($store->getState('svc'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('svc'))->toBe(0)
+        ->and($store->getWindow('svc', 10))->toEqual(CallWindow::empty())
         ->and($store->getHalfOpenSuccesses('svc'))->toBe(0)
         ->and($store->getLastTrippedAt('svc'))->toBeNull()
         ->and($store->getLastFailureReason('svc'))->toBeNull()
@@ -151,18 +154,24 @@ it('resets state and counters but keeps the circuit registered', function (strin
 it('persists circuit limits and keeps them across reset', function (string $driver): void {
     $store = circuitStore($driver);
 
-    expect($store->getFailureThreshold('svc'))->toBeNull()
+    expect($store->getSlidingWindowSize('svc'))->toBeNull()
+        ->and($store->getMinimumCalls('svc'))->toBeNull()
+        ->and($store->getFailureRateThreshold('svc'))->toBeNull()
         ->and($store->getRecoveryTimeout('svc'))->toBeNull()
         ->and($store->getHalfOpenTrials('svc'))->toBeNull();
 
-    $store->setFailureThreshold('svc', 3);
+    $store->setSlidingWindowSize('svc', 20);
+    $store->setMinimumCalls('svc', 8);
+    $store->setFailureRateThreshold('svc', 40);
     $store->setRecoveryTimeout('svc', 60);
     $store->setHalfOpenTrials('svc', 2);
     $store->forceState('svc', CircuitState::OPEN);
 
     $store->reset('svc');
 
-    expect($store->getFailureThreshold('svc'))->toBe(3)
+    expect($store->getSlidingWindowSize('svc'))->toBe(20)
+        ->and($store->getMinimumCalls('svc'))->toBe(8)
+        ->and($store->getFailureRateThreshold('svc'))->toBe(40)
         ->and($store->getRecoveryTimeout('svc'))->toBe(60)
         ->and($store->getHalfOpenTrials('svc'))->toBe(2)
         ->and($store->getState('svc'))->toBe(CircuitState::CLOSED)
@@ -172,37 +181,47 @@ it('persists circuit limits and keeps them across reset', function (string $driv
 it('forgets a circuit, including its limits and index entry', function (string $driver): void {
     $store = circuitStore($driver);
 
-    $store->incrementFailures('keep', 'stay');
-    $store->setFailureThreshold('drop', 4);
+    $store->recordOutcome('keep', true, 10, 'stay');
+    $store->setSlidingWindowSize('drop', 4);
+    $store->setMinimumCalls('drop', 4);
+    $store->setFailureRateThreshold('drop', 50);
     $store->setRecoveryTimeout('drop', 12);
     $store->setHalfOpenTrials('drop', 2);
-    $store->incrementFailures('drop', 'boom');
+    $store->recordOutcome('drop', true, 10, 'boom');
     $store->forceState('drop', CircuitState::OPEN);
 
     $store->forget('drop');
 
     expect($store->circuits())->toBe(['keep'])
         ->and($store->getState('drop'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('drop'))->toBe(0)
+        ->and($store->getWindow('drop', 10))->toEqual(CallWindow::empty())
         ->and($store->getLastTrippedAt('drop'))->toBeNull()
         ->and($store->getLastFailureReason('drop'))->toBeNull()
-        ->and($store->getFailureThreshold('drop'))->toBeNull()
+        ->and($store->getSlidingWindowSize('drop'))->toBeNull()
+        ->and($store->getMinimumCalls('drop'))->toBeNull()
+        ->and($store->getFailureRateThreshold('drop'))->toBeNull()
         ->and($store->getRecoveryTimeout('drop'))->toBeNull()
         ->and($store->getHalfOpenTrials('drop'))->toBeNull()
         ->and($store->getState('keep'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('keep'))->toBe(1);
+        ->and($store->getWindow('keep', 10))->toEqual(new CallWindow(1, 1));
 })->with('stores');
 
 it('forgets a single persisted limit and leaves the others', function (string $driver): void {
     $store = circuitStore($driver);
 
-    $store->setFailureThreshold('svc', 4);
+    $store->setSlidingWindowSize('svc', 4);
+    $store->setMinimumCalls('svc', 4);
+    $store->setFailureRateThreshold('svc', 50);
     $store->setRecoveryTimeout('svc', 12);
     $store->setHalfOpenTrials('svc', 2);
 
-    $store->forgetFailureThreshold('svc');
+    $store->forgetSlidingWindowSize('svc');
+    $store->forgetMinimumCalls('svc');
+    $store->forgetFailureRateThreshold('svc');
 
-    expect($store->getFailureThreshold('svc'))->toBeNull()
+    expect($store->getSlidingWindowSize('svc'))->toBeNull()
+        ->and($store->getMinimumCalls('svc'))->toBeNull()
+        ->and($store->getFailureRateThreshold('svc'))->toBeNull()
         ->and($store->getRecoveryTimeout('svc'))->toBe(12)
         ->and($store->getHalfOpenTrials('svc'))->toBe(2);
 
@@ -216,10 +235,12 @@ it('forgets a single persisted limit and leaves the others', function (string $d
 it('isolates configured limits between circuits', function (string $driver): void {
     $store = circuitStore($driver);
 
-    $store->setFailureThreshold('a', 3);
+    $store->setSlidingWindowSize('a', 20);
+    $store->setFailureRateThreshold('a', 40);
     $store->setRecoveryTimeout('a', 60);
 
-    expect($store->getFailureThreshold('b'))->toBeNull()
+    expect($store->getSlidingWindowSize('b'))->toBeNull()
+        ->and($store->getFailureRateThreshold('b'))->toBeNull()
         ->and($store->getRecoveryTimeout('b'))->toBeNull();
 })->with('stores');
 
@@ -227,8 +248,8 @@ it('isolates state between circuits', function (string $driver): void {
     $store = circuitStore($driver);
 
     $store->forceState('a', CircuitState::OPEN);
-    $store->incrementFailures('a');
+    $store->recordOutcome('a', true, 10);
 
     expect($store->getState('b'))->toBe(CircuitState::CLOSED)
-        ->and($store->getFailures('b'))->toBe(0);
+        ->and($store->getWindow('b', 10))->toEqual(CallWindow::empty());
 })->with('stores');

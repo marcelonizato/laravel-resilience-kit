@@ -14,10 +14,11 @@ use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
 /**
  * API JSON do dashboard: listagem dos circuitos e reset manual.
  *
- * Os limites exibidos (`failure_threshold`, `recovery_timeout`,
- * `half_open_trials`) seguem o último valor persistido pela API fluente ou
- * pelo atributo. O que não foi definido usa `circuits.{name}` ou, se o
- * circuito não estiver no config, os defaults de `circuit_breaker`.
+ * A amostra exibida (`calls_count`, `failures_count`, `failure_rate`) é a
+ * janela deslizante. Os limites (`sliding_window_size`, `minimum_calls`,
+ * `failure_rate_threshold`, `recovery_timeout`, `half_open_trials`) seguem o
+ * último valor persistido pela API fluente ou pelo atributo. O que não foi
+ * definido usa `circuits.{name}` ou os defaults de `circuit_breaker`.
  */
 class CircuitApiController extends Controller
 {
@@ -84,14 +85,22 @@ class CircuitApiController extends Controller
             ? max(0, $trippedAt + $circuit->getRecoveryTimeout() - Carbon::now()->getTimestamp())
             : null;
 
+        $window = $circuit->getWindow();
+
         return [
             'name' => $circuit->name(),
             'state' => $state->value,
             'state_label' => $state->label(),
-            'failures_count' => $circuit->getFailures(),
-            'failure_threshold' => $circuit->getFailureThreshold(),
-            'recovery_timeout' => $circuit->getRecoveryTimeout(),
+            'calls_count' => $window->calls,
+            'failures_count' => $window->failures,
+            'failure_rate' => $window->failureRate(),
+            'sliding_window_size' => $circuit->getSlidingWindowSize(),
+            'minimum_calls' => $circuit->getMinimumCalls(),
+            'effective_minimum_calls' => $circuit->getEffectiveMinimumCalls(),
+            'failure_rate_threshold' => $circuit->getFailureRateThreshold(),
+            'half_open_successes' => $circuit->getHalfOpenSuccesses(),
             'half_open_trials' => $circuit->getHalfOpenTrials(),
+            'recovery_timeout' => $circuit->getRecoveryTimeout(),
             'last_tripped_at' => $trippedAt === null ? null : Carbon::createFromTimestamp($trippedAt)->toIso8601String(),
             'last_failure_reason' => $circuit->getLastFailureReason(),
             'retry_after' => $retryAfter,
