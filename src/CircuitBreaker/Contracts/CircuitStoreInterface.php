@@ -131,6 +131,11 @@ interface CircuitStoreInterface
     public function getFailureThreshold(string $circuit): ?int;
 
     /**
+     * Apaga o limite de falhas persistido. O circuito volta ao valor do config.
+     */
+    public function forgetFailureThreshold(string $circuit): void;
+
+    /**
      * Persiste o timeout de recuperação, em segundos.
      *
      * Sobrevive a {@see self::reset()}.
@@ -143,6 +148,11 @@ interface CircuitStoreInterface
     public function getRecoveryTimeout(string $circuit): ?int;
 
     /**
+     * Apaga o timeout de recuperação persistido. O circuito volta ao valor do config.
+     */
+    public function forgetRecoveryTimeout(string $circuit): void;
+
+    /**
      * Persiste a quantidade de sucessos em HALF-OPEN necessária para fechar.
      *
      * Sobrevive a {@see self::reset()}.
@@ -153,4 +163,9 @@ interface CircuitStoreInterface
      * Quantidade de trials persistida, ou `null` se o circuito nunca a definiu.
      */
     public function getHalfOpenTrials(string $circuit): ?int;
+
+    /**
+     * Apaga a quantidade de trials persistida. O circuito volta ao valor do config.
+     */
+    public function forgetHalfOpenTrials(string $circuit): void;
 }

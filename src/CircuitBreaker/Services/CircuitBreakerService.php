@@ -42,10 +42,11 @@ use UnexpectedValueException;
  * ação falha (a falha é sempre contabilizada antes). Sem fallback, a exceção
  * original da ação é relançada.
  *
- * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` alteram só
- * esta instância. Uma chamada nova do mesmo circuito, sem esses métodos,
- * volta ao padrão recebido no construtor (`circuits.{name}` ou
- * `circuit_breaker.*`). O dashboard lê esse padrão, não o último override.
+ * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` gravam o
+ * limite no store. O dashboard e uma instância nova do mesmo nome mostram
+ * esses valores. Em `run()`, o limite que não foi definido nessa chamada é
+ * apagado do store e volta ao padrão do construtor (`circuits.{name}` ou
+ * `circuit_breaker.*`).
  */
 class CircuitBreakerService implements CircuitBreakerInterface
 {
@@ -57,6 +58,18 @@ class CircuitBreakerService implements CircuitBreakerInterface
     private int $recoveryTimeout;
 
     private int $halfOpenTrials;
+
+    private readonly int $configuredFailureThreshold;
+
+    private readonly int $configuredRecoveryTimeout;
+
+    private readonly int $configuredHalfOpenTrials;
+
+    private bool $failureThresholdExplicit = false;
+
+    private bool $recoveryTimeoutExplicit = false;
+
+    private bool $halfOpenTrialsExplicit = false;
 
     /**
      * @param  string  $name  Nome único do circuito.
@@ -76,9 +89,25 @@ class CircuitBreakerService implements CircuitBreakerInterface
         int $recoveryTimeout = 30,
         int $halfOpenTrials = 3,
     ) {
-        $this->applyFailureThreshold($failureThreshold);
-        $this->applyRecoveryTimeout($recoveryTimeout);
-        $this->applyHalfOpenTrials($halfOpenTrials);
+        $this->configuredFailureThreshold = $failureThreshold;
+        $this->configuredRecoveryTimeout = $recoveryTimeout;
+        $this->configuredHalfOpenTrials = $halfOpenTrials;
+
+        $this->applyFailureThreshold($this->resolveLimit(
+            $store->getFailureThreshold($name),
+            $failureThreshold,
+            1,
+        ));
+        $this->applyRecoveryTimeout($this->resolveLimit(
+            $store->getRecoveryTimeout($name),
+            $recoveryTimeout,
+            0,
+        ));
+        $this->applyHalfOpenTrials($this->resolveLimit(
+            $store->getHalfOpenTrials($name),
+            $halfOpenTrials,
+            1,
+        ));
     }
 
     /**
@@ -95,6 +124,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function failureThreshold(int $failures): static
     {
         $this->applyFailureThreshold($failures);
+        $this->failureThresholdExplicit = true;
+        $this->store->setFailureThreshold($this->name, $failures);
 
         return $this;
     }
@@ -105,6 +136,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function recoveryTimeout(int $seconds): static
     {
         $this->applyRecoveryTimeout($seconds);
+        $this->recoveryTimeoutExplicit = true;
+        $this->store->setRecoveryTimeout($this->name, $seconds);
 
         return $this;
     }
@@ -115,6 +148,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function halfOpenTrials(int $trials): static
     {
         $this->applyHalfOpenTrials($trials);
+        $this->halfOpenTrialsExplicit = true;
+        $this->store->setHalfOpenTrials($this->name, $trials);
 
         return $this;
     }
@@ -205,6 +240,8 @@ class CircuitBreakerService implements CircuitBreakerInterface
      */
     public function run(Closure $action): mixed
     {
+        $this->commitLimits();
+
         if ($this->resolveState() === CircuitState::OPEN) {
             return $this->handleFailure($this->openException());
         }
@@ -399,6 +436,44 @@ class CircuitBreakerService implements CircuitBreakerInterface
         }
 
         $this->halfOpenTrials = $trials;
+    }
+
+    /**
+     * Grava os limites definidos nesta chamada e apaga os que foram omitidos.
+     *
+     * O dashboard passa a mostrar só o que esta execução informou; o restante
+     * volta ao config (`circuits.{name}` ou `circuit_breaker.*`).
+     */
+    private function commitLimits(): void
+    {
+        if ($this->failureThresholdExplicit) {
+            $this->store->setFailureThreshold($this->name, $this->failureThreshold);
+        } else {
+            $this->applyFailureThreshold($this->configuredFailureThreshold);
+            $this->store->forgetFailureThreshold($this->name);
+        }
+
+        if ($this->recoveryTimeoutExplicit) {
+            $this->store->setRecoveryTimeout($this->name, $this->recoveryTimeout);
+        } else {
+            $this->applyRecoveryTimeout($this->configuredRecoveryTimeout);
+            $this->store->forgetRecoveryTimeout($this->name);
+        }
+
+        if ($this->halfOpenTrialsExplicit) {
+            $this->store->setHalfOpenTrials($this->name, $this->halfOpenTrials);
+        } else {
+            $this->applyHalfOpenTrials($this->configuredHalfOpenTrials);
+            $this->store->forgetHalfOpenTrials($this->name);
+        }
+    }
+
+    /**
+     * Prefere o valor persistido quando ele respeita o mínimo; senão, o padrão.
+     */
+    private function resolveLimit(?int $stored, int $fallback, int $minimum): int
+    {
+        return $stored !== null && $stored >= $minimum ? $stored : $fallback;
     }
 
     /**

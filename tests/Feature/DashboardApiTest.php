@@ -56,7 +56,7 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->assertJsonPath('circuits.0.state', 'open')
         ->assertJsonPath('circuits.0.state_label', 'OPEN')
         ->assertJsonPath('circuits.0.failures_count', 1)
-        ->assertJsonPath('circuits.0.failure_threshold', 5)
+        ->assertJsonPath('circuits.0.failure_threshold', 1)
         ->assertJsonPath('circuits.0.recovery_timeout', 60)
         ->assertJsonPath('circuits.0.half_open_trials', 3)
         ->assertJsonPath('circuits.0.last_failure_reason', 'database down')
@@ -75,7 +75,7 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->and(Carbon\Carbon::parse($trippedAt)->getTimestamp())->toBe($broken->getLastTrippedAt());
 });
 
-it('shows the config defaults on the dashboard after a fluent override', function (): void {
+it('shows fluent limits on the dashboard', function (): void {
     config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
@@ -88,6 +88,25 @@ it('shows the config defaults on the dashboard after a fluent override', functio
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
         ->assertJsonPath('circuits.0.name', 'payment-service')
+        ->assertJsonPath('circuits.0.failure_threshold', 3)
+        ->assertJsonPath('circuits.0.recovery_timeout', 60)
+        ->assertJsonPath('circuits.0.half_open_trials', 2);
+});
+
+it('shows the config again after a later call omits the fluent limits', function (): void {
+    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
+    config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
+
+    Resilience::circuitBreaker('payment-service')
+        ->failureThreshold(3)
+        ->recoveryTimeout(60)
+        ->halfOpenTrials(2);
+
+    Resilience::circuitBreaker('payment-service')->run(fn (): string => 'ok');
+
+    $this->getJson('/resilience/api/circuits')
+        ->assertOk()
         ->assertJsonPath('circuits.0.failure_threshold', 5)
         ->assertJsonPath('circuits.0.recovery_timeout', 30)
         ->assertJsonPath('circuits.0.half_open_trials', 3);
@@ -111,7 +130,7 @@ it('shows named circuit limits from the configuration without a fluent override'
         ->assertJsonPath('circuits.0.half_open_trials', 3);
 });
 
-it('keeps the config defaults on the dashboard after a fluent call and a reset', function (): void {
+it('keeps fluent limits on the dashboard after a reset', function (): void {
     Resilience::circuitBreaker('payment-service')
         ->failureThreshold(3)
         ->recoveryTimeout(60);
@@ -120,8 +139,8 @@ it('keeps the config defaults on the dashboard after a fluent call and a reset',
 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
-        ->assertJsonPath('circuits.0.failure_threshold', 5)
-        ->assertJsonPath('circuits.0.recovery_timeout', 30);
+        ->assertJsonPath('circuits.0.failure_threshold', 3)
+        ->assertJsonPath('circuits.0.recovery_timeout', 60);
 });
 
 it('shows HALF-OPEN on the dashboard after the recovery timeout elapses', function (): void {

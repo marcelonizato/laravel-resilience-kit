@@ -36,12 +36,13 @@ class CircuitBreakerManager extends Manager
     /**
      * Cria um Circuit Breaker nomeado.
      *
-     * Precedência dos limites ao criar a instância:
-     *  1. defaults de `resilience-kit.circuit_breaker.*`;
-     *  2. entrada em `resilience-kit.circuits.{name}` (chaves omitidas herdam o global).
+     * Precedência ao criar a instância, para cada limite:
+     *  1. valor persistido por `failureThreshold()`, `recoveryTimeout()` ou
+     *     `halfOpenTrials()` (o dashboard mostra esse valor);
+     *  2. entrada em `resilience-kit.circuits.{name}`;
+     *  3. default de `resilience-kit.circuit_breaker.*`.
      *
-     * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` valem só
-     * para esta instância. A chamada seguinte, sem esses métodos, volta ao config.
+     * Em `run()`, o limite omitido nessa chamada sai do store e volta ao config.
      *
      * O circuito é registrado no índice do driver (uma vez por processo) para
      * aparecer no dashboard mesmo antes da primeira execução.

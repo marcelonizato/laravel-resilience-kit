@@ -51,12 +51,13 @@ return [
     | Limites por nome de circuito. Chaves omitidas herdam o default global
     | de `circuit_breaker` acima.
     |
-    | Precedência ao criar um circuito:
-    |   1. defaults de `circuit_breaker.*`
+    | Precedência ao criar um circuito, para cada limite:
+    |   1. valor persistido pela API fluente ou #[WithCircuitBreaker]
     |   2. entrada em `circuits.{name}` (se existir)
+    |   3. defaults de `circuit_breaker.*`
     |
-    | API fluente e #[WithCircuitBreaker] alteram só aquela instância.
-    | A chamada seguinte, sem esses parâmetros, volta a esta configuração.
+    | O dashboard mostra essa precedência. Em run(), o limite omitido na
+    | chamada deixa de ser persistido e volta ao config.
     |
     */
     'circuits' => [

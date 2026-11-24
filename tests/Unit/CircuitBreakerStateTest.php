@@ -389,12 +389,12 @@ it('shares state between instances of the same circuit name', function (): void 
     expect($other->getState())->toBe(CircuitState::OPEN);
 });
 
-it('uses the config defaults on a new instance when fluent limits are omitted', function (): void {
+it('rehydrates the persisted limits on a new instance of the same circuit', function (): void {
     $again = Resilience::circuitBreaker('test-service');
 
-    expect($again->getFailureThreshold())->toBe(5)
-        ->and($again->getRecoveryTimeout())->toBe(30)
-        ->and($again->getHalfOpenTrials())->toBe(3);
+    expect($again->getFailureThreshold())->toBe(2)
+        ->and($again->getRecoveryTimeout())->toBe(10)
+        ->and($again->getHalfOpenTrials())->toBe(2);
 });
 
 /*

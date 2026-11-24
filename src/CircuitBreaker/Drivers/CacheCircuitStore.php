@@ -247,6 +247,14 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forgetFailureThreshold(string $circuit): void
+    {
+        $this->cache->forget($this->keys->failureThreshold($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setRecoveryTimeout(string $circuit, int $seconds): void
     {
         $this->writeConfig($circuit, $this->keys->recoveryTimeout($circuit), $seconds);
@@ -263,6 +271,14 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forgetRecoveryTimeout(string $circuit): void
+    {
+        $this->cache->forget($this->keys->recoveryTimeout($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setHalfOpenTrials(string $circuit, int $trials): void
     {
         $this->writeConfig($circuit, $this->keys->halfOpenTrials($circuit), $trials);
@@ -274,6 +290,14 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     public function getHalfOpenTrials(string $circuit): ?int
     {
         return $this->readOptionalInt($this->keys->halfOpenTrials($circuit));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetHalfOpenTrials(string $circuit): void
+    {
+        $this->cache->forget($this->keys->halfOpenTrials($circuit));
     }
 
     /**

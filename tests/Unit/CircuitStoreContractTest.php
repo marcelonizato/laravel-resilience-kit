@@ -193,6 +193,26 @@ it('forgets a circuit, including its limits and index entry', function (string $
         ->and($store->getFailures('keep'))->toBe(1);
 })->with('stores');
 
+it('forgets a single persisted limit and leaves the others', function (string $driver): void {
+    $store = circuitStore($driver);
+
+    $store->setFailureThreshold('svc', 4);
+    $store->setRecoveryTimeout('svc', 12);
+    $store->setHalfOpenTrials('svc', 2);
+
+    $store->forgetFailureThreshold('svc');
+
+    expect($store->getFailureThreshold('svc'))->toBeNull()
+        ->and($store->getRecoveryTimeout('svc'))->toBe(12)
+        ->and($store->getHalfOpenTrials('svc'))->toBe(2);
+
+    $store->forgetRecoveryTimeout('svc');
+    $store->forgetHalfOpenTrials('svc');
+
+    expect($store->getRecoveryTimeout('svc'))->toBeNull()
+        ->and($store->getHalfOpenTrials('svc'))->toBeNull();
+})->with('stores');
+
 it('isolates configured limits between circuits', function (string $driver): void {
     $store = circuitStore($driver);
 

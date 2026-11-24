@@ -69,7 +69,7 @@ Para suportar alta concorrência sem *race conditions* em ambiente distribuído:
 ],
 ```
 
-Precedência ao criar um circuito: defaults de `circuit_breaker.*` → `circuits.{name}` (chaves omitidas herdam o global). A API fluente e `#[WithCircuitBreaker]` alteram só a instância corrente; a chamada seguinte, sem esses parâmetros, volta ao config.
+Precedência ao criar um circuito: valor persistido pela API fluente / `#[WithCircuitBreaker]` → `circuits.{name}` (chaves omitidas herdam o global) → defaults de `circuit_breaker.*`. O dashboard mostra essa precedência. Em `run()`, o limite omitido na chamada é apagado do store e volta ao config.
 
 ---
 

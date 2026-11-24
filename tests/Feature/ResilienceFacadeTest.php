@@ -67,7 +67,7 @@ it('inherits omitted named keys from the global circuit breaker defaults', funct
         ->and($circuit->getHalfOpenTrials())->toBe(3);
 });
 
-it('applies fluent limits only to the current instance', function (): void {
+it('shows fluent limits on a later instance until a call omits them', function (): void {
     config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
@@ -88,9 +88,17 @@ it('applies fluent limits only to the current instance', function (): void {
 
     $again = Resilience::circuitBreaker('payment-gateway');
 
-    expect($again->getFailureThreshold())->toBe(3)
-        ->and($again->getRecoveryTimeout())->toBe(60)
-        ->and($again->getHalfOpenTrials())->toBe(2);
+    expect($again->getFailureThreshold())->toBe(1)
+        ->and($again->getRecoveryTimeout())->toBe(15)
+        ->and($again->getHalfOpenTrials())->toBe(1);
+
+    $again->run(fn (): string => 'ok');
+
+    $after = Resilience::circuitBreaker('payment-gateway');
+
+    expect($after->getFailureThreshold())->toBe(3)
+        ->and($after->getRecoveryTimeout())->toBe(60)
+        ->and($after->getHalfOpenTrials())->toBe(2);
 });
 
 it('returns to the global defaults when a later call omits fluent limits', function (): void {
@@ -101,6 +109,14 @@ it('returns to the global defaults when a later call omits fluent limits', funct
     Resilience::circuitBreaker('payment-gateway2')
         ->failureThreshold(3)
         ->recoveryTimeout(30);
+
+    $shown = Resilience::circuitBreaker('payment-gateway2');
+
+    expect($shown->getFailureThreshold())->toBe(3)
+        ->and($shown->getRecoveryTimeout())->toBe(30)
+        ->and($shown->getHalfOpenTrials())->toBe(3);
+
+    $shown->run(fn (): string => 'ok');
 
     $again = Resilience::circuitBreaker('payment-gateway2');
 

@@ -208,6 +208,14 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forgetFailureThreshold(string $circuit): void
+    {
+        unset($this->failureThresholds[$circuit]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setRecoveryTimeout(string $circuit, int $seconds): void
     {
         $this->register($circuit);
@@ -225,6 +233,14 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forgetRecoveryTimeout(string $circuit): void
+    {
+        unset($this->recoveryTimeouts[$circuit]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setHalfOpenTrials(string $circuit, int $trials): void
     {
         $this->register($circuit);
@@ -237,6 +253,14 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     public function getHalfOpenTrials(string $circuit): ?int
     {
         return $this->halfOpenTrials[$circuit] ?? null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function forgetHalfOpenTrials(string $circuit): void
+    {
+        unset($this->halfOpenTrials[$circuit]);
     }
 
     /**

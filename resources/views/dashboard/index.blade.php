@@ -97,7 +97,7 @@
     </div>
 
     <footer class="muted">
-        Thresholds and timeouts follow <code>circuits.{name}</code>, then the global defaults in <code>config/resilience-kit.php</code>.
+        Thresholds and timeouts follow the last <code>failureThreshold()</code> / <code>recoveryTimeout()</code> call, then <code>circuits.{name}</code>, then the global defaults. A later call that omits them returns to the config.
     </footer>
 </div>
 

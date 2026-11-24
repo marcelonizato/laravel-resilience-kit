@@ -83,7 +83,7 @@ return [
 ];
 ```
 
-Precedência ao criar um circuito: defaults de `circuit_breaker` → `circuits.{name}`. A API fluente e o `#[WithCircuitBreaker]` alteram só aquela instância; a chamada seguinte, sem esses parâmetros, volta ao config.
+Precedência ao criar um circuito: valor persistido pela API fluente ou `#[WithCircuitBreaker]` → `circuits.{name}` → defaults de `circuit_breaker`. O dashboard segue essa ordem. Em `run()`, o limite omitido na chamada deixa de ser persistido e volta ao config.
 
 ---
 
@@ -104,7 +104,7 @@ $result = Resilience::circuitBreaker('payment-gateway')
     });
 ```
 
-Override só desta chamada (a próxima, sem esses métodos, volta ao config):
+Override persistido (aparece no dashboard; a próxima `run()` sem esses métodos volta ao config):
 
 ```php
 Resilience::circuitBreaker('payment-gateway')
@@ -180,7 +180,7 @@ Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota defi
 | `POST` | `/resilience/api/circuits/{name}/reset` | Reset manual (`404` se o circuito não existir) |
 | `DELETE` | `/resilience/api/circuits/{name}` | Remove o circuito do painel (`404` se não existir). A próxima chamada pode registrá-lo de novo |
 
-> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem `circuits.{name}` e, se o circuito não estiver no config, os defaults de `circuit_breaker`. Overrides da API fluente não aparecem no painel.
+> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem o último `failureThreshold()` / `recoveryTimeout()` / `halfOpenTrials()` persistido e, para o que não foi definido, `circuits.{name}` ou os defaults de `circuit_breaker`. Uma `run()` que omite o método faz o painel voltar ao config.
 
 ### Autenticação e autorização
 
