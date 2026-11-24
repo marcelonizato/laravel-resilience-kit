@@ -173,6 +173,24 @@ final class ArrayCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forget(string $circuit): void
+    {
+        unset(
+            $this->registered[$circuit],
+            $this->states[$circuit],
+            $this->failures[$circuit],
+            $this->halfOpenSuccesses[$circuit],
+            $this->lastTrippedAt[$circuit],
+            $this->lastFailureReason[$circuit],
+            $this->failureThresholds[$circuit],
+            $this->recoveryTimeouts[$circuit],
+            $this->halfOpenTrials[$circuit],
+        );
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setFailureThreshold(string $circuit, int $threshold): void
     {
         $this->register($circuit);

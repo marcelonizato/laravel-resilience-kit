@@ -18,6 +18,7 @@ it('rejects unauthenticated requests to the api', function (): void {
 
     $this->getJson('/resilience/api/circuits')->assertUnauthorized();
     $this->postJson('/resilience/api/circuits/order-service/reset')->assertUnauthorized();
+    $this->deleteJson('/resilience/api/circuits/order-service')->assertUnauthorized();
 });
 
 it('does not reset the circuit for an unauthenticated request', function (): void {
@@ -25,6 +26,8 @@ it('does not reset the circuit for an unauthenticated request', function (): voi
     $circuit->trip();
 
     $this->postJson('/resilience/api/circuits/order-service/reset');
+    $this->deleteJson('/resilience/api/circuits/order-service');
 
-    expect($circuit->getState()->isOpen())->toBeTrue();
+    expect($circuit->getState()->isOpen())->toBeTrue()
+        ->and(Resilience::store()->circuits())->toBe(['order-service']);
 });

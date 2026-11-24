@@ -47,6 +47,8 @@
         .badge.open { color: var(--open); background: var(--open-bg); }
         .badge.half_open { color: var(--half); background: var(--half-bg); }
         .reason { max-width: 320px; word-break: break-word; }
+        .actions { white-space: nowrap; }
+        .actions button + button { margin-left: 8px; }
         .empty, .error { padding: 28px; text-align: center; }
         .error { color: var(--open); background: var(--open-bg); border-radius: 8px; margin-bottom: 16px; padding: 10px 14px; text-align: left; }
         [hidden] { display: none !important; }
@@ -95,7 +97,7 @@
     </div>
 
     <footer class="muted">
-        Thresholds and timeouts follow store overrides, then <code>circuits.{name}</code>, then the global defaults in <code>config/resilience-kit.php</code>.
+        Thresholds and timeouts follow <code>circuits.{name}</code>, then the global defaults in <code>config/resilience-kit.php</code>.
     </footer>
 </div>
 
@@ -105,6 +107,7 @@
 
         var CIRCUITS_URL = @json($circuitsUrl);
         var RESET_URL = @json($resetUrlTemplate);
+        var REMOVE_URL = @json($removeUrlTemplate);
         var CSRF = document.querySelector('meta[name="csrf-token"]').content;
         var REFRESH_MS = 5000;
 
@@ -173,11 +176,15 @@
                 tr.appendChild(el('td', null, formatDate(circuit.last_tripped_at)));
                 tr.appendChild(el('td', 'reason muted', circuit.last_failure_reason || '—'));
 
-                var action = el('td');
-                var button = el('button', 'danger', 'Reset');
-                button.type = 'button';
-                button.addEventListener('click', function () { reset(circuit.name, button); });
-                action.appendChild(button);
+                var action = el('td', 'actions');
+                var resetButton = el('button', 'danger', 'Reset');
+                resetButton.type = 'button';
+                resetButton.addEventListener('click', function () { reset(circuit.name, resetButton); });
+                var removeButton = el('button', 'danger', 'Remove');
+                removeButton.type = 'button';
+                removeButton.addEventListener('click', function () { remove(circuit.name, removeButton); });
+                action.appendChild(resetButton);
+                action.appendChild(removeButton);
                 tr.appendChild(action);
 
                 rows.appendChild(tr);
@@ -212,6 +219,21 @@
                 .catch(function (error) {
                     button.disabled = false;
                     showError('Could not reset "' + name + '": ' + error.message);
+                });
+        }
+
+        function remove(name, button) {
+            if (!window.confirm('Remove circuit "' + name + '"? It will leave the dashboard and its stored state will be deleted. A later call can register it again.')) {
+                return;
+            }
+
+            button.disabled = true;
+
+            request(REMOVE_URL.replace('__NAME__', encodeURIComponent(name)), { method: 'DELETE' })
+                .then(load)
+                .catch(function (error) {
+                    button.disabled = false;
+                    showError('Could not remove "' + name + '": ' + error.message);
                 });
         }
 

@@ -169,6 +169,30 @@ it('persists circuit limits and keeps them across reset', function (string $driv
         ->and($store->circuits())->toBe(['svc']);
 })->with('stores');
 
+it('forgets a circuit, including its limits and index entry', function (string $driver): void {
+    $store = circuitStore($driver);
+
+    $store->incrementFailures('keep', 'stay');
+    $store->setFailureThreshold('drop', 4);
+    $store->setRecoveryTimeout('drop', 12);
+    $store->setHalfOpenTrials('drop', 2);
+    $store->incrementFailures('drop', 'boom');
+    $store->forceState('drop', CircuitState::OPEN);
+
+    $store->forget('drop');
+
+    expect($store->circuits())->toBe(['keep'])
+        ->and($store->getState('drop'))->toBe(CircuitState::CLOSED)
+        ->and($store->getFailures('drop'))->toBe(0)
+        ->and($store->getLastTrippedAt('drop'))->toBeNull()
+        ->and($store->getLastFailureReason('drop'))->toBeNull()
+        ->and($store->getFailureThreshold('drop'))->toBeNull()
+        ->and($store->getRecoveryTimeout('drop'))->toBeNull()
+        ->and($store->getHalfOpenTrials('drop'))->toBeNull()
+        ->and($store->getState('keep'))->toBe(CircuitState::CLOSED)
+        ->and($store->getFailures('keep'))->toBe(1);
+})->with('stores');
+
 it('isolates configured limits between circuits', function (string $driver): void {
     $store = circuitStore($driver);
 

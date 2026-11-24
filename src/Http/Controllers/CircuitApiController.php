@@ -15,8 +15,9 @@ use LaravelResilienceKit\CircuitBreaker\Enums\CircuitState;
  * API JSON do dashboard: listagem dos circuitos e reset manual.
  *
  * Os limites exibidos (`failure_threshold`, `recovery_timeout`,
- * `half_open_trials`) seguem a precedência: store (API fluente/atributo),
- * depois `circuits.{name}` e, por fim, os defaults de `circuit_breaker`.
+ * `half_open_trials`) vêm de `circuits.{name}` ou, se o circuito não
+ * estiver no config, dos defaults de `circuit_breaker`. Overrides da API
+ * fluente e do atributo não são reaproveitados aqui.
  */
 class CircuitApiController extends Controller
 {
@@ -47,6 +48,22 @@ class CircuitApiController extends Controller
         $this->manager->circuitBreaker($name)->reset();
 
         return response()->json(['message' => "Circuit {$name} reset successfully"]);
+    }
+
+    /**
+     * Remove o circuito do índice e apaga estado, contadores e limites.
+     *
+     * Uma chamada posterior com o mesmo nome registra o circuito de novo.
+     */
+    public function destroy(string $name): JsonResponse
+    {
+        if (! in_array($name, $this->manager->store()->circuits(), true)) {
+            return response()->json(['message' => "Circuit {$name} not found"], 404);
+        }
+
+        $this->manager->forget($name);
+
+        return response()->json(['message' => "Circuit {$name} removed successfully"]);
     }
 
     /**

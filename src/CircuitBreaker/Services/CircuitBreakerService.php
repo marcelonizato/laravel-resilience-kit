@@ -42,10 +42,10 @@ use UnexpectedValueException;
  * ação falha (a falha é sempre contabilizada antes). Sem fallback, a exceção
  * original da ação é relançada.
  *
- * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` gravam o
- * limite no store. Uma instância nova do mesmo circuito (incluindo a criada
- * pelo dashboard) reidrata esses valores; o que não tiver sido definido usa
- * o padrão recebido no construtor (`circuits.{name}` ou `circuit_breaker.*`).
+ * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` alteram só
+ * esta instância. Uma chamada nova do mesmo circuito, sem esses métodos,
+ * volta ao padrão recebido no construtor (`circuits.{name}` ou
+ * `circuit_breaker.*`). O dashboard lê esse padrão, não o último override.
  */
 class CircuitBreakerService implements CircuitBreakerInterface
 {
@@ -76,21 +76,9 @@ class CircuitBreakerService implements CircuitBreakerInterface
         int $recoveryTimeout = 30,
         int $halfOpenTrials = 3,
     ) {
-        $this->applyFailureThreshold($this->resolveLimit(
-            $store->getFailureThreshold($name),
-            $failureThreshold,
-            1,
-        ));
-        $this->applyRecoveryTimeout($this->resolveLimit(
-            $store->getRecoveryTimeout($name),
-            $recoveryTimeout,
-            0,
-        ));
-        $this->applyHalfOpenTrials($this->resolveLimit(
-            $store->getHalfOpenTrials($name),
-            $halfOpenTrials,
-            1,
-        ));
+        $this->applyFailureThreshold($failureThreshold);
+        $this->applyRecoveryTimeout($recoveryTimeout);
+        $this->applyHalfOpenTrials($halfOpenTrials);
     }
 
     /**
@@ -107,7 +95,6 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function failureThreshold(int $failures): static
     {
         $this->applyFailureThreshold($failures);
-        $this->store->setFailureThreshold($this->name, $failures);
 
         return $this;
     }
@@ -118,7 +105,6 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function recoveryTimeout(int $seconds): static
     {
         $this->applyRecoveryTimeout($seconds);
-        $this->store->setRecoveryTimeout($this->name, $seconds);
 
         return $this;
     }
@@ -129,7 +115,6 @@ class CircuitBreakerService implements CircuitBreakerInterface
     public function halfOpenTrials(int $trials): static
     {
         $this->applyHalfOpenTrials($trials);
-        $this->store->setHalfOpenTrials($this->name, $trials);
 
         return $this;
     }
@@ -414,14 +399,6 @@ class CircuitBreakerService implements CircuitBreakerInterface
         }
 
         $this->halfOpenTrials = $trials;
-    }
-
-    /**
-     * Prefere o valor persistido quando ele respeita o mínimo; senão, o padrão.
-     */
-    private function resolveLimit(?int $stored, int $fallback, int $minimum): int
-    {
-        return $stored !== null && $stored >= $minimum ? $stored : $fallback;
     }
 
     /**

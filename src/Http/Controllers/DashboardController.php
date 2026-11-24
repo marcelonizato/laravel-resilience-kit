@@ -25,6 +25,7 @@ class DashboardController extends Controller
         return $this->views->make('resilience-kit::dashboard.index', [
             'circuitsUrl' => route('resilience.api.circuits.index'),
             'resetUrlTemplate' => route('resilience.api.circuits.reset', ['name' => '__NAME__']),
+            'removeUrlTemplate' => route('resilience.api.circuits.destroy', ['name' => '__NAME__']),
             'csrfToken' => $request->hasSession() ? $request->session()->token() : '',
         ]);
     }

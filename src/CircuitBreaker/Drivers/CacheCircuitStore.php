@@ -204,6 +204,33 @@ final readonly class CacheCircuitStore implements CircuitStoreInterface
     /**
      * {@inheritDoc}
      */
+    public function forget(string $circuit): void
+    {
+        $this->withLock($this->keys->indexLock(), function () use ($circuit): void {
+            $index = array_values(array_filter(
+                $this->readIndex(),
+                static fn (string $name): bool => $name !== $circuit,
+            ));
+
+            if ($index === []) {
+                $this->cache->forget($this->keys->index());
+
+                return;
+            }
+
+            $this->cache->forever($this->keys->index(), $index);
+        });
+
+        $this->withCircuitLock($circuit, function () use ($circuit): void {
+            foreach ([...$this->keys->all($circuit), ...$this->keys->configuration($circuit)] as $key) {
+                $this->cache->forget($key);
+            }
+        });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setFailureThreshold(string $circuit, int $threshold): void
     {
         $this->writeConfig($circuit, $this->keys->failureThreshold($circuit), $threshold);

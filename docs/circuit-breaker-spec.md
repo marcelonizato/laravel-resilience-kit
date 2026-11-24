@@ -69,7 +69,7 @@ Para suportar alta concorrência sem *race conditions* em ambiente distribuído:
 ],
 ```
 
-Precedência ao criar um circuito: defaults de `circuit_breaker.*` → `circuits.{name}` (chaves omitidas herdam o global) → valores persistidos no store (API fluente / `#[WithCircuitBreaker]`).
+Precedência ao criar um circuito: defaults de `circuit_breaker.*` → `circuits.{name}` (chaves omitidas herdam o global). A API fluente e `#[WithCircuitBreaker]` alteram só a instância corrente; a chamada seguinte, sem esses parâmetros, volta ao config.
 
 ---
 
@@ -194,6 +194,7 @@ volumes:
 - `GET /resilience/dashboard` — View principal com tabela interativa de circuitos.
 - `GET /resilience/api/circuits` — Retorna JSON com estado, contadores de falha/sucesso e métricas de todos os circuitos.
 - `POST /resilience/api/circuits/{name}/reset` — Executa o reset atômico do circuito informado e retorna status 200 JSON.
+- `DELETE /resilience/api/circuits/{name}` — Remove o circuito do índice e apaga o estado persistido. A próxima chamada com o mesmo nome registra o circuito de novo.
 
 ### Testes da API do Dashboard (`tests/Feature/DashboardApiTest.php`):
 ```php

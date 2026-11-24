@@ -110,6 +110,14 @@ interface CircuitStoreInterface
     public function reset(string $circuit): void;
 
     /**
+     * Remove o circuito do índice e apaga estado, contadores e limites.
+     *
+     * Diferente de {@see self::reset()}, o circuito deixa de aparecer na
+     * listagem. Uma chamada posterior a {@see self::register()} o recria.
+     */
+    public function forget(string $circuit): void;
+
+    /**
      * Persiste o limite de falhas do circuito.
      *
      * Sobrevive a {@see self::reset()}. `null` em {@see self::getFailureThreshold()}

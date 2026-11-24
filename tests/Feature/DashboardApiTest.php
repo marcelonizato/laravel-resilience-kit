@@ -56,7 +56,7 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->assertJsonPath('circuits.0.state', 'open')
         ->assertJsonPath('circuits.0.state_label', 'OPEN')
         ->assertJsonPath('circuits.0.failures_count', 1)
-        ->assertJsonPath('circuits.0.failure_threshold', 1)
+        ->assertJsonPath('circuits.0.failure_threshold', 5)
         ->assertJsonPath('circuits.0.recovery_timeout', 60)
         ->assertJsonPath('circuits.0.half_open_trials', 3)
         ->assertJsonPath('circuits.0.last_failure_reason', 'database down')
@@ -75,7 +75,7 @@ it('reports the live state and metrics of every circuit, sorted by name', functi
         ->and(Carbon\Carbon::parse($trippedAt)->getTimestamp())->toBe($broken->getLastTrippedAt());
 });
 
-it('shows the limits configured on the circuit instead of the config defaults', function (): void {
+it('shows the config defaults on the dashboard after a fluent override', function (): void {
     config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
     config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
     config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
@@ -88,9 +88,9 @@ it('shows the limits configured on the circuit instead of the config defaults', 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
         ->assertJsonPath('circuits.0.name', 'payment-service')
-        ->assertJsonPath('circuits.0.failure_threshold', 3)
-        ->assertJsonPath('circuits.0.recovery_timeout', 60)
-        ->assertJsonPath('circuits.0.half_open_trials', 2);
+        ->assertJsonPath('circuits.0.failure_threshold', 5)
+        ->assertJsonPath('circuits.0.recovery_timeout', 30)
+        ->assertJsonPath('circuits.0.half_open_trials', 3);
 });
 
 it('shows named circuit limits from the configuration without a fluent override', function (): void {
@@ -111,7 +111,7 @@ it('shows named circuit limits from the configuration without a fluent override'
         ->assertJsonPath('circuits.0.half_open_trials', 3);
 });
 
-it('keeps the configured limits on the dashboard after a reset', function (): void {
+it('keeps the config defaults on the dashboard after a fluent call and a reset', function (): void {
     Resilience::circuitBreaker('payment-service')
         ->failureThreshold(3)
         ->recoveryTimeout(60);
@@ -120,8 +120,8 @@ it('keeps the configured limits on the dashboard after a reset', function (): vo
 
     $this->getJson('/resilience/api/circuits')
         ->assertOk()
-        ->assertJsonPath('circuits.0.failure_threshold', 3)
-        ->assertJsonPath('circuits.0.recovery_timeout', 60);
+        ->assertJsonPath('circuits.0.failure_threshold', 5)
+        ->assertJsonPath('circuits.0.recovery_timeout', 30);
 });
 
 it('shows HALF-OPEN on the dashboard after the recovery timeout elapses', function (): void {
@@ -226,6 +226,68 @@ it('resets circuits whose names contain special characters', function (string $n
     'unicode' => 'cobrança-serviço',
 ]);
 
+it('removes a circuit from the index and deletes its stored state', function (): void {
+    $cb = Resilience::circuitBreaker('order-service');
+    $cb->trip();
+    Resilience::store()->setFailureThreshold('order-service', 9);
+
+    $this->deleteJson('/resilience/api/circuits/order-service')
+        ->assertOk()
+        ->assertJson(['message' => 'Circuit order-service removed successfully']);
+
+    expect(Resilience::store()->circuits())->toBe([])
+        ->and(Resilience::store()->getState('order-service'))->toBe(CircuitState::CLOSED)
+        ->and(Resilience::store()->getFailures('order-service'))->toBe(0)
+        ->and(Resilience::store()->getLastFailureReason('order-service'))->toBeNull()
+        ->and(Resilience::store()->getFailureThreshold('order-service'))->toBeNull();
+
+    $this->getJson('/resilience/api/circuits')
+        ->assertExactJson(['circuits' => []]);
+});
+
+it('registers a circuit again after it was removed', function (): void {
+    Resilience::circuitBreaker('order-service')->trip();
+
+    $this->deleteJson('/resilience/api/circuits/order-service')->assertOk();
+
+    Resilience::circuitBreaker('order-service')->getState();
+
+    expect(Resilience::store()->circuits())->toBe(['order-service'])
+        ->and(Resilience::circuitBreaker('order-service')->getState())->toBe(CircuitState::CLOSED);
+});
+
+it('returns 404 and does not register unknown circuits on remove', function (): void {
+    $this->deleteJson('/resilience/api/circuits/ghost-service')
+        ->assertNotFound()
+        ->assertJson(['message' => 'Circuit ghost-service not found']);
+
+    expect(Resilience::store()->circuits())->toBe([]);
+});
+
+it('removes circuits whose names contain special characters', function (string $name): void {
+    Resilience::circuitBreaker($name)->trip();
+
+    $this->deleteJson('/resilience/api/circuits/'.rawurlencode($name))
+        ->assertOk()
+        ->assertJson(['message' => "Circuit {$name} removed successfully"]);
+
+    expect(Resilience::store()->circuits())->toBe([])
+        ->and(Resilience::store()->getState($name))->toBe(CircuitState::CLOSED);
+})->with([
+    'with slash' => 'payments/stripe',
+    'with backslash and colons' => 'App\\Services\\Pay::charge',
+    'with space' => 'order service',
+    'unicode' => 'cobrança-serviço',
+]);
+
+it('does not allow removing through GET', function (): void {
+    Resilience::circuitBreaker('order-service')->getState();
+
+    $this->getJson('/resilience/api/circuits/order-service')->assertStatus(405);
+
+    expect(Resilience::store()->circuits())->toBe(['order-service']);
+});
+
 it('does not allow resetting through GET', function (): void {
     Resilience::circuitBreaker('order-service')->getState();
 
@@ -244,6 +306,7 @@ it('renders the dashboard view with the api endpoints', function (): void {
         ->assertViewIs('resilience-kit::dashboard.index')
         ->assertViewHas('circuitsUrl', url('/resilience/api/circuits'))
         ->assertSee('Circuit Breakers')
+        ->assertSee('Remove', false)
         ->assertSee('csrf-token', false)
         // Embutida no <script> via @json (com barras escapadas).
         ->assertSee(json_encode(url('/resilience/api/circuits')), false)
@@ -253,7 +316,8 @@ it('renders the dashboard view with the api endpoints', function (): void {
 it('names the dashboard routes', function (): void {
     expect(route('resilience.dashboard', absolute: false))->toBe('/resilience/dashboard')
         ->and(route('resilience.api.circuits.index', absolute: false))->toBe('/resilience/api/circuits')
-        ->and(route('resilience.api.circuits.reset', ['name' => 'x'], false))->toBe('/resilience/api/circuits/x/reset');
+        ->and(route('resilience.api.circuits.reset', ['name' => 'x'], false))->toBe('/resilience/api/circuits/x/reset')
+        ->and(route('resilience.api.circuits.destroy', ['name' => 'x'], false))->toBe('/resilience/api/circuits/x');
 });
 
 /*
@@ -267,6 +331,7 @@ it('denies access when the gate rejects the user', function (): void {
 
     $this->getJson('/resilience/api/circuits')->assertForbidden();
     $this->postJson('/resilience/api/circuits/order-service/reset')->assertForbidden();
+    $this->deleteJson('/resilience/api/circuits/order-service')->assertForbidden();
     $this->get('/resilience/dashboard')->assertForbidden();
 });
 

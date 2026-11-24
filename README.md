@@ -83,7 +83,7 @@ return [
 ];
 ```
 
-Precedência dos limites: defaults de `circuit_breaker` → `circuits.{name}` → API fluente / `#[WithCircuitBreaker]` (persiste no store e vence).
+Precedência ao criar um circuito: defaults de `circuit_breaker` → `circuits.{name}`. A API fluente e o `#[WithCircuitBreaker]` alteram só aquela instância; a chamada seguinte, sem esses parâmetros, volta ao config.
 
 ---
 
@@ -104,7 +104,7 @@ $result = Resilience::circuitBreaker('payment-gateway')
     });
 ```
 
-Override pontual (vence o config e persiste no store):
+Override só desta chamada (a próxima, sem esses métodos, volta ao config):
 
 ```php
 Resilience::circuitBreaker('payment-gateway')
@@ -169,7 +169,7 @@ Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota defi
 
 - **Visão Geral de Circuitos:** Acompanhe o estado atual de cada circuito registrado (`CLOSED`, `OPEN`, `HALF-OPEN`), com atualização automática a cada 5 segundos.
 - **Métricas:** Contador de falhas (vs. limite), `recovery_timeout`, horário da última abertura, motivo da última falha e tempo restante até a tentativa de recuperação.
-- **Ações Imediatas:** Botão de **Reset Manual** para fechar instantaneamente um circuito aberto após manutenção no serviço dependente.
+- **Ações Imediatas:** Botão de **Reset** para fechar um circuito aberto e botão de **Remove** (com confirmação) para tirá-lo do painel e apagar o estado persistido.
 
 ### API JSON
 
@@ -178,8 +178,9 @@ Acesse o painel integrado navegando para `/resilience/dashboard` (ou a rota defi
 | `GET`  | `/resilience/dashboard` | Painel (view Blade) |
 | `GET`  | `/resilience/api/circuits` | Lista de circuitos e métricas |
 | `POST` | `/resilience/api/circuits/{name}/reset` | Reset manual (`404` se o circuito não existir) |
+| `DELETE` | `/resilience/api/circuits/{name}` | Remove o circuito do painel (`404` se não existir). A próxima chamada pode registrá-lo de novo |
 
-> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem a precedência store (API fluente/atributo) → `circuits.{name}` → defaults de `circuit_breaker`. O reset manual preserva overrides persistidos no store.
+> Os limites exibidos (`failure_threshold`, `recovery_timeout`, `half_open_trials`) seguem `circuits.{name}` e, se o circuito não estiver no config, os defaults de `circuit_breaker`. Overrides da API fluente não aparecem no painel.
 
 ### Autenticação e autorização
 

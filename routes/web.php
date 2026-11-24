@@ -19,7 +19,8 @@ use LaravelResilienceKit\Http\Middleware\AuthorizeDashboard;
 |
 |  GET  {path}                         view principal do painel
 |  GET  {api_path}/circuits            lista JSON dos circuitos
-|  POST {api_path}/circuits/{name}/reset   reset manual de um circuito
+|  POST   {api_path}/circuits/{name}/reset   reset manual de um circuito
+|  DELETE {api_path}/circuits/{name}        remove o circuito do índice
 |
 */
 
@@ -42,4 +43,9 @@ Route::middleware($middleware)->group(function () use ($path, $apiPath): void {
     Route::post($apiPath.'/circuits/{name}/reset', [CircuitApiController::class, 'reset'])
         ->where('name', '.+')
         ->name('resilience.api.circuits.reset');
+
+    // `.+` permite nomes de circuito com "/" (ex.: "payments/stripe").
+    Route::delete($apiPath.'/circuits/{name}', [CircuitApiController::class, 'destroy'])
+        ->where('name', '.+')
+        ->name('resilience.api.circuits.destroy');
 });

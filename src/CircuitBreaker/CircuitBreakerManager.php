@@ -36,10 +36,12 @@ class CircuitBreakerManager extends Manager
     /**
      * Cria um Circuit Breaker nomeado.
      *
-     * Precedência dos limites:
+     * Precedência dos limites ao criar a instância:
      *  1. defaults de `resilience-kit.circuit_breaker.*`;
-     *  2. entrada em `resilience-kit.circuits.{name}` (chaves omitidas herdam o global);
-     *  3. valores já persistidos no store (API fluente / atributo).
+     *  2. entrada em `resilience-kit.circuits.{name}` (chaves omitidas herdam o global).
+     *
+     * `failureThreshold()`, `recoveryTimeout()` e `halfOpenTrials()` valem só
+     * para esta instância. A chamada seguinte, sem esses métodos, volta ao config.
      *
      * O circuito é registrado no índice do driver (uma vez por processo) para
      * aparecer no dashboard mesmo antes da primeira execução.
@@ -89,6 +91,21 @@ class CircuitBreakerManager extends Manager
     public function call(object $target, string $method, array $arguments = []): mixed
     {
         return $this->runner()->call($target, $method, $arguments);
+    }
+
+    /**
+     * Remove o circuito do índice e apaga o estado persistido.
+     *
+     * A próxima chamada a {@see self::circuitBreaker()} com o mesmo nome
+     * registra o circuito outra vez, com os limites do config.
+     *
+     * @param  string  $name  Nome único do circuito.
+     */
+    public function forget(string $name): void
+    {
+        $this->store()->forget($name);
+
+        unset($this->registered[$this->getDefaultDriver().'|'.$name]);
     }
 
     /**

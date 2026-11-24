@@ -54,7 +54,9 @@ return [
     | Precedência ao criar um circuito:
     |   1. defaults de `circuit_breaker.*`
     |   2. entrada em `circuits.{name}` (se existir)
-    |   3. API fluente / #[WithCircuitBreaker] (persiste no store e vence)
+    |
+    | API fluente e #[WithCircuitBreaker] alteram só aquela instância.
+    | A chamada seguinte, sem esses parâmetros, volta a esta configuração.
     |
     */
     'circuits' => [

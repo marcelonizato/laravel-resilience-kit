@@ -12,10 +12,10 @@ use LaravelResilienceKit\Contracts\ResilienceFeatureInterface;
 /**
  * Contrato de um Circuit Breaker nomeado, com API fluente de configuração.
  *
- * Os métodos de configuração alteram a instância corrente, persistem o limite
- * no store do circuito e retornam `$this`. Instâncias seguintes do mesmo nome
- * — inclusive a do dashboard — reutilizam esses valores. O que não for
- * definido continua vindo de `config/resilience-kit.php`.
+ * Os métodos de configuração alteram só a instância corrente e retornam
+ * `$this`. Uma instância nova do mesmo nome, sem esses métodos, volta aos
+ * limites de `config/resilience-kit.php` (`circuits.{name}` ou
+ * `circuit_breaker.*`). O dashboard lê esse padrão.
  */
 interface CircuitBreakerInterface extends ResilienceFeatureInterface
 {

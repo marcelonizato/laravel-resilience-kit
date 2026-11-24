@@ -67,23 +67,46 @@ it('inherits omitted named keys from the global circuit breaker defaults', funct
         ->and($circuit->getHalfOpenTrials())->toBe(3);
 });
 
-it('lets the fluent API override named circuit limits and persist them', function (): void {
+it('applies fluent limits only to the current instance', function (): void {
+    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 30);
+    config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
     config()->set('resilience-kit.circuits.payment-gateway', [
         'failure_threshold' => 3,
         'recovery_timeout' => 60,
         'half_open_trials' => 2,
     ]);
 
-    Resilience::circuitBreaker('payment-gateway')
+    $configured = Resilience::circuitBreaker('payment-gateway')
         ->failureThreshold(1)
         ->recoveryTimeout(15)
         ->halfOpenTrials(1);
 
+    expect($configured->getFailureThreshold())->toBe(1)
+        ->and($configured->getRecoveryTimeout())->toBe(15)
+        ->and($configured->getHalfOpenTrials())->toBe(1);
+
     $again = Resilience::circuitBreaker('payment-gateway');
 
-    expect($again->getFailureThreshold())->toBe(1)
-        ->and($again->getRecoveryTimeout())->toBe(15)
-        ->and($again->getHalfOpenTrials())->toBe(1);
+    expect($again->getFailureThreshold())->toBe(3)
+        ->and($again->getRecoveryTimeout())->toBe(60)
+        ->and($again->getHalfOpenTrials())->toBe(2);
+});
+
+it('returns to the global defaults when a later call omits fluent limits', function (): void {
+    config()->set('resilience-kit.circuit_breaker.failure_threshold', 5);
+    config()->set('resilience-kit.circuit_breaker.recovery_timeout', 25);
+    config()->set('resilience-kit.circuit_breaker.half_open_trials', 3);
+
+    Resilience::circuitBreaker('payment-gateway2')
+        ->failureThreshold(3)
+        ->recoveryTimeout(30);
+
+    $again = Resilience::circuitBreaker('payment-gateway2');
+
+    expect($again->getFailureThreshold())->toBe(5)
+        ->and($again->getRecoveryTimeout())->toBe(25)
+        ->and($again->getHalfOpenTrials())->toBe(3);
 });
 
 it('registers the circuit in the store index as soon as it is created', function (): void {

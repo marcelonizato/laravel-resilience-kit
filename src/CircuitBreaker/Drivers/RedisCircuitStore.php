@@ -212,6 +212,19 @@ LUA;
     /**
      * {@inheritDoc}
      */
+    public function forget(string $circuit): void
+    {
+        $this->connection->command('srem', [$this->keys->index(), $circuit]);
+        $this->connection->command('del', [
+            ...$this->keys->all($circuit),
+            ...$this->keys->configuration($circuit),
+            $this->keys->lock($circuit),
+        ]);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setFailureThreshold(string $circuit, int $threshold): void
     {
         $this->writeConfig($circuit, $this->keys->failureThreshold($circuit), $threshold);
